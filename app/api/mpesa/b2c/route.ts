@@ -12,7 +12,7 @@
  */
 import { NextRequest } from 'next/server';
 import { requireAdmin, checkTotp, handleGuardError } from '@/lib/guard';
-import { b2cPayment, isStub } from '@/lib/mpesa';
+import { resolveProcessor } from '@/lib/payments';
 import { logAudit } from '@/lib/audit';
 
 export async function POST(request: NextRequest) {
@@ -64,18 +64,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await b2cPayment({
+    const currency: string = (disb?.currency_code as string) ?? ctx.org.currency_code ?? 'KES';
+    const proc = await resolveProcessor(admin, ctx.orgId, 'payouts', currency);
+
+    const result = await proc.payout({
       phone: targetPhone,
       amountMinor: amount as number,
-      remarks: remarks ?? `Benefit payout${disb ? ` ${(disb.beneficiary_name as string) ?? ''}` : ''}`.trim(),
+      currency,
+      beneficiaryName: (disb?.beneficiary_name as string) ?? undefined,
+      remarks: (remarks ?? `Benefit payout${disb ? ` ${(disb.beneficiary_name as string) ?? ''}` : ''}`).trim(),
     });
 
     if (disb) {
       await admin
         .from('disbursements')
         .update({
-          mpesa_receipt: result.originatorConversationId,
-          status: isStub() ? 'completed' : 'pending',
+          channel: result.channel,
+          mpesa_receipt: result.providerRef,
+          status: result.settled ? 'completed' : 'pending',
         })
         .eq('id', disb.id)
         .eq('org_id', ctx.orgId);
@@ -83,28 +89,33 @@ export async function POST(request: NextRequest) {
 
     await logAudit(admin, {
       actorId: profile.id,
-      action: 'b2c_payment_sent',
+      action: 'payout_sent',
       entity: 'disbursement',
       entityId: (disb?.id as string) ?? null,
       orgId: ctx.orgId,
       details: {
         phone: targetPhone,
         amountMinor: amount,
-        conversationId: result.conversationId,
-        originatorConversationId: result.originatorConversationId,
-        stub: isStub(),
+        processor: proc.processor,
+        channel: result.channel,
+        providerRef: result.providerRef,
+        settled: result.settled,
       },
     });
 
     return Response.json({
-      conversationId: result.conversationId,
-      originatorConversationId: result.originatorConversationId,
-      status: isStub() ? 'completed' : 'pending',
+      processor: proc.processor,
+      channel: result.channel,
+      providerRef: result.providerRef,
+      status: result.settled ? 'completed' : 'pending',
       disbursementId: disb?.id ?? null,
     });
   } catch (e) {
-    if (e instanceof Error && /b2cPayment|Daraja|MPESA_|phone/i.test(e.message)) {
-      return Response.json({ error: 'mpesa_error', message: e.message }, { status: 502 });
+    if (e instanceof Error && /phone|processor_currency_unsupported|payouts_unsupported|mpesa_kes_only/i.test(e.message)) {
+      return Response.json({ error: 'payout_error', message: e.message }, { status: 400 });
+    }
+    if (e instanceof Error && /failed|key|credential|secret/i.test(e.message)) {
+      return Response.json({ error: 'processor_error', message: e.message }, { status: 502 });
     }
     return handleGuardError(e);
   }

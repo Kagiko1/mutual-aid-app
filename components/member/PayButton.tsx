@@ -2,7 +2,13 @@
 
 import { useState } from 'react';
 
-/** Triggers an M-Pesa STK push for a single invoice via the backend API. */
+/**
+ * Starts a collection for a single invoice via the backend, which routes
+ * through the org's active payment processor:
+ *  - M-Pesa Daraja: STK push to the entered phone number.
+ *  - Flutterwave / Paystack / Stripe: redirects the member to a hosted
+ *    payment page; the webhook reconciles the invoice afterwards.
+ */
 export default function PayButton({ invoiceId, defaultPhone }: { invoiceId: string; defaultPhone: string }) {
   const [phone, setPhone] = useState(defaultPhone);
   const [busy, setBusy] = useState(false);
@@ -12,22 +18,28 @@ export default function PayButton({ invoiceId, defaultPhone }: { invoiceId: stri
     setBusy(true);
     setMessage(null);
     try {
-      if (!phone.trim()) throw new Error('Please enter your M-Pesa phone number.');
       const res = await fetch('/api/mpesa/stk-push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invoiceId, phone: phone.trim() }),
+        body: JSON.stringify({ invoiceId, phone: phone.trim() || undefined }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data.error || data.message || `Payment request failed (HTTP ${res.status}).`);
+        throw new Error(data.message || data.error || `Payment request failed (HTTP ${res.status}).`);
+      }
+      if (data.authorizationUrl) {
+        setMessage({ kind: 'ok', text: 'Opening the secure payment page…' });
+        window.location.href = data.authorizationUrl as string;
+        return;
       }
       setMessage({
         kind: 'ok',
-        text: data.message || 'STK push sent. Enter your M-Pesa PIN on your phone to complete payment.',
+        text:
+          data.message ||
+          'Payment request sent. Follow the prompt on your phone to complete payment.',
       });
-    } catch (err: any) {
-      setMessage({ kind: 'error', text: err.message ?? 'Payment failed.' });
+    } catch (err: unknown) {
+      setMessage({ kind: 'error', text: err instanceof Error ? err.message : 'Payment failed.' });
     } finally {
       setBusy(false);
     }
@@ -40,9 +52,9 @@ export default function PayButton({ invoiceId, defaultPhone }: { invoiceId: stri
           type="tel"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
-          placeholder="+2547..."
-          aria-label="M-Pesa phone number"
-          className="w-40 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-emerald-600 focus:outline-none"
+          placeholder="Phone (for M-Pesa)"
+          aria-label="Phone number for mobile money"
+          className="w-44 rounded-md border border-gray-300 px-3 py-1.5 text-sm focus:border-emerald-600 focus:outline-none"
         />
         <button
           type="button"
@@ -50,7 +62,7 @@ export default function PayButton({ invoiceId, defaultPhone }: { invoiceId: stri
           disabled={busy}
           className="rounded-md bg-emerald-700 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-800 disabled:opacity-50"
         >
-          {busy ? 'Sending...' : 'Pay with M-Pesa'}
+          {busy ? 'Sending…' : 'Pay now'}
         </button>
       </div>
       {message && (

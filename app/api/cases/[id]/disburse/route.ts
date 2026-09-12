@@ -12,7 +12,7 @@ import { NextRequest } from 'next/server';
 import { requireAdmin, checkTotp, handleGuardError } from '@/lib/guard';
 import { getOrgConfig } from '@/lib/org';
 import { splitBeneficiaries, validatePercentages } from '@/lib/engines/beneficiarySplit';
-import { b2cPayment, isStub } from '@/lib/mpesa';
+import { resolveProcessor } from '@/lib/payments';
 import { logAudit } from '@/lib/audit';
 import { notifyMember } from '@/lib/notify';
 import { formatMoney } from '@/lib/money';
@@ -58,11 +58,14 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     const cfg = await getOrgConfig(admin, ctx.orgId);
     // Disbursements inherit the case's currency.
     const caseCurrency: string = theCase.currency_code ?? cfg.currencyCode;
+    const proc = await resolveProcessor(admin, ctx.orgId, 'payouts', caseCurrency);
     const allocations = splitBeneficiaries(voucher.amount, shares);
     const results: { beneficiaryId: string; beneficiaryName: string; amountMinor: number; status: string }[] = [];
 
     for (const alloc of allocations) {
       const ben = bens.find((b) => b.id === alloc.beneficiaryId)!;
+      // Channel is corrected to the processor's channel once the payout is sent.
+      let channel = 'mpesa_b2c';
       const { data: disb, error: disbErr } = await admin
         .from('disbursements')
         .insert({
@@ -72,7 +75,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
           beneficiary_name: ben.full_name,
           amount: alloc.amountMinor,
           currency_code: caseCurrency,
-          channel: 'mpesa_b2c',
+          channel,
           status: 'pending',
         })
         .select()
@@ -85,26 +88,30 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       // No phone on file -> leave pending for manual payout via /api/mpesa/b2c.
       if (ben.phone) {
         try {
-          const pay = await b2cPayment({
+          const pay = await proc.payout({
             phone: ben.phone,
             amountMinor: alloc.amountMinor,
+            currency: caseCurrency,
+            beneficiaryName: ben.full_name,
             remarks: `Benefit payout ${voucher.voucher_no} - ${ben.full_name}`.slice(0, 100),
           });
+          channel = pay.channel;
           await admin
             .from('disbursements')
             .update({
-              mpesa_receipt: pay.originatorConversationId,
-              status: isStub() ? 'completed' : 'pending',
+              channel: pay.channel,
+              mpesa_receipt: pay.providerRef,
+              status: pay.settled ? 'completed' : 'pending',
             })
             .eq('id', disb.id);
           results.push({
             beneficiaryId: ben.id,
             beneficiaryName: ben.full_name,
             amountMinor: alloc.amountMinor,
-            status: isStub() ? 'completed' : 'pending',
+            status: pay.settled ? 'completed' : 'pending',
           });
         } catch (e) {
-          console.error(`[disburse] B2C failed for ${ben.full_name}:`, e);
+          console.error(`[disburse] payout failed for ${ben.full_name}:`, e);
           await admin.from('disbursements').update({ status: 'failed' }).eq('id', disb.id);
           results.push({ beneficiaryId: ben.id, beneficiaryName: ben.full_name, amountMinor: alloc.amountMinor, status: 'failed' });
         }
@@ -135,6 +142,9 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
     return Response.json({ caseId: theCase.id, allocations: results });
   } catch (e) {
+    if (e instanceof Error && /processor_currency_unsupported|payouts_unsupported|mpesa_kes_only/i.test(e.message)) {
+      return Response.json({ error: 'payout_error', message: e.message }, { status: 400 });
+    }
     return handleGuardError(e);
   }
 }

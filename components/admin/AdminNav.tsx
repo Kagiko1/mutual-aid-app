@@ -18,6 +18,7 @@ const LINKS = [
   { href: '/admin/audit', label: 'Audit' },
   { href: '/admin/config', label: 'Config' },
   { href: '/admin/billing', label: 'Billing' },
+  { href: '/admin/payments', label: 'Payments' },
 ];
 
 export interface OrgOption {
