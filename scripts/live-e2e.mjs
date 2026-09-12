@@ -240,6 +240,22 @@ async function main() {
   check('member sees only own org config rows', isoRows.every((r) => r.key !== undefined) && isoRows.length > 0);
 
   console.log('== 12. Cleanup scratch orgs ==');
+  // delete auth users first (profiles cascade from org delete, auth.users does not)
+  const authIds = [OWNER_EMAIL, MEMBER_EMAIL, `e2e-usd-${stamp}@example.org`];
+  for (const email of authIds) {
+    try {
+      const list = await fetch(`${SUPABASE_URL}/auth/v1/admin/users?per_page=100`, {
+        headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+      }).then((r) => r.json());
+      const u = (list.users || []).find((x) => x.email === email);
+      if (u) {
+        await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${u.id}`, {
+          method: 'DELETE',
+          headers: { apikey: SUPABASE_SERVICE_ROLE_KEY, authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` },
+        });
+      }
+    } catch { /* best-effort */ }
+  }
   for (const id of [usdOrg.id, orgId]) {
     const del = await fetch(`${SUPABASE_URL}/rest/v1/organizations?id=eq.${id}`, {
       method: 'DELETE',

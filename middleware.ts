@@ -2,14 +2,15 @@
  * Auth middleware: refreshes Supabase session cookies on every request and
  * redirects unauthenticated users to /login for all non-public paths.
  *
- * Public: /, /login, M-Pesa callbacks (called by Daraja without a session),
- * and the cron endpoint (authenticates via CRON_SECRET itself).
+ * Public: /, /login, /start (org create/join), M-Pesa callbacks (called by Daraja
+ * without a session), the cron endpoint (authenticates via CRON_SECRET itself),
+ * and the public auth/signup APIs.
  */
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 
-const PUBLIC_PATHS = ['/', '/login'];
-const PUBLIC_PREFIXES = ['/api/mpesa/callback', '/api/mpesa/b2c-callback', '/api/cron/'];
+const PUBLIC_PATHS = ['/', '/login', '/start'];
+const PUBLIC_PREFIXES = ['/api/mpesa/callback', '/api/mpesa/b2c-callback', '/api/cron/', '/api/signup', '/api/auth/'];
 
 function isPublic(pathname: string): boolean {
   if (PUBLIC_PATHS.includes(pathname)) return true;
