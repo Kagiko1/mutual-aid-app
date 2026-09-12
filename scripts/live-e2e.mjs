@@ -37,9 +37,11 @@ function check(name, cond, extra = '') {
   }
 }
 
-async function api(path, { method = 'GET', body, token, totp } = {}) {
+async function api(path, { method = 'GET', body, cookie, totp } = {}) {
   const headers = { 'content-type': 'application/json' };
-  if (token) headers.authorization = `Bearer ${token}`;
+  // The app's server guard reads the Supabase session from cookies (SSR),
+  // not from the Authorization header.
+  if (cookie) headers.cookie = cookie;
   if (totp) headers['x-totp-code'] = totp;
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -73,9 +75,22 @@ async function signIn(email, password) {
     headers: { apikey: SUPABASE_ANON_KEY, 'content-type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
-  const json = await res.json();
-  if (!res.ok) throw new Error(`sign-in failed for ${email}: ${JSON.stringify(json)}`);
-  return json.access_token;
+  const session = await res.json();
+  if (!res.ok) throw new Error(`sign-in failed for ${email}: ${JSON.stringify(session)}`);
+  // SSR cookie format expected by @supabase/ssr: base64url JSON session
+  const payload = {
+    access_token: session.access_token,
+    refresh_token: session.refresh_token,
+    token_type: 'bearer',
+    expires_in: session.expires_in ?? 3600,
+    expires_at: Math.floor(Date.now() / 1000) + (session.expires_in ?? 3600),
+    user: session.user,
+  };
+  const value = 'base64-' + Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return {
+    cookie: `sb-vhzolnzofabonlsrkgzc-auth-token=${value}`,
+    accessToken: session.access_token,
+  };
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -105,8 +120,9 @@ async function main() {
   check('org_config currency_code=KES', curRow?.value === 'KES');
 
   console.log('== 2. Owner + member accounts ==');
-  const ownerToken = await signIn(OWNER_EMAIL, PASSWORD);
-  check('owner sign-in', !!ownerToken);
+  const ownerSession = await signIn(OWNER_EMAIL, PASSWORD);
+  const ownerCookie = ownerSession.cookie;
+  check('owner sign-in', !!ownerCookie);
   const [ownerProfile] = await svc('profiles', { query: `?email=eq.${OWNER_EMAIL}&select=id,role,org_id` });
   check('owner profile role=owner', ownerProfile?.role === 'owner');
   check('owner profile org matches', ownerProfile?.org_id === orgId);
@@ -119,7 +135,8 @@ async function main() {
     },
   });
   check('member join 200', join.status === 200, JSON.stringify(join.json).slice(0, 200));
-  const memberToken = await signIn(MEMBER_EMAIL, PASSWORD);
+  const memberSession = await signIn(MEMBER_EMAIL, PASSWORD);
+  const memberCookie = memberSession.cookie;
   const [memberProfile] = await svc('profiles', { query: `?email=eq.${MEMBER_EMAIL}&select=*` });
   const memberId = memberProfile.id;
   check('member profile org matches', memberProfile?.org_id === orgId);
@@ -148,23 +165,23 @@ async function main() {
 
   console.log('== 4. Admin review ==');
   const review = await api(`/api/cases/${caseId}/review`, {
-    method: 'POST', token: ownerToken,
+    method: 'POST', cookie: ownerCookie,
     body: { decision: 'reviewed', notes: 'E2E: docs verified' },
   });
   check('review 200', review.status === 200, JSON.stringify(review.json).slice(0, 200));
 
   console.log('== 5. Enable TOTP for the owner (admin MFA gate) ==');
-  const setup = await api('/api/admin/totp/setup', { method: 'POST', token: ownerToken });
+  const setup = await api('/api/admin/totp/setup', { method: 'POST', cookie: ownerCookie });
   check('totp setup 200', setup.status === 200);
   const totpCode = generateSync({ secret: setup.json.secret });
   const verify = await api('/api/admin/totp/verify', {
-    method: 'POST', token: ownerToken, body: { token: totpCode },
+    method: 'POST', cookie: ownerCookie, body: { token: totpCode },
   });
   check('totp verify 200', verify.status === 200, JSON.stringify(verify.json).slice(0, 160));
 
   console.log('== 6. Approve (voucher + invoicing) ==');
   const approve = await api(`/api/cases/${caseId}/approve`, {
-    method: 'POST', token: ownerToken, totp: generateSync({ secret: setup.json.secret }),
+    method: 'POST', cookie: ownerCookie, totp: generateSync({ secret: setup.json.secret }),
     body: { signatureType: 'typed', signatureData: 'E2E Owner' },
   });
   check('approve 200', approve.status === 200, JSON.stringify(approve.json).slice(0, 300));
@@ -182,7 +199,7 @@ async function main() {
   let paymentCompleted = false;
   if (myInvoice) {
     const stk = await api('/api/mpesa/stk-push', {
-      method: 'POST', token: memberToken,
+      method: 'POST', cookie: memberCookie,
       body: { invoiceId: myInvoice.id, phone: '254700000002' },
     });
     check('stk-push 200', stk.status === 200, JSON.stringify(stk.json).slice(0, 200));
@@ -199,7 +216,7 @@ async function main() {
 
   console.log('== 8. Disburse to beneficiary ==');
   const disburse = await api(`/api/cases/${caseId}/disburse`, {
-    method: 'POST', token: ownerToken, totp: generateSync({ secret: setup.json.secret }),
+    method: 'POST', cookie: ownerCookie, totp: generateSync({ secret: setup.json.secret }),
   });
   check('disburse 200', disburse.status === 200, JSON.stringify(disburse.json).slice(0, 300));
   const [doneCase] = await svc('cases', { query: `?id=eq.${caseId}&select=status` });
@@ -234,7 +251,7 @@ async function main() {
   console.log('== 11. Tenant isolation spot-check ==');
   // member token from org A must NOT see org B's org_config via RLS
   const isoRes = await fetch(`${SUPABASE_URL}/rest/v1/org_config?select=key`, {
-    headers: { apikey: SUPABASE_ANON_KEY, authorization: `Bearer ${memberToken}` },
+    headers: { apikey: SUPABASE_ANON_KEY, authorization: `Bearer ${memberSession.accessToken}` },
   });
   const isoRows = await isoRes.json();
   check('member sees only own org config rows', isoRows.every((r) => r.key !== undefined) && isoRows.length > 0);
