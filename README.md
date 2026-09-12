@@ -1,14 +1,35 @@
 # Umoja Welfare — Mutual Aid App
 
-A member-owned mutual aid welfare platform: onboarding with KYC, welfare case
-lifecycle (review → approve → voucher → fractional disbursement), per-case
-contribution invoicing with M-Pesa STK collections and an automated
+A **multi-tenant SaaS** mutual aid welfare platform: organizations sign up,
+invite members, and run their own welfare program — onboarding with KYC,
+welfare case lifecycle (review → approve → voucher → fractional disbursement),
+per-case contribution invoicing with M-Pesa STK collections and an automated
 T+4 / T+6 / T+7 collection drip, anonymous governance ballots, events, fund
-wallets, audit logging, and CSV/PDF reports.
+wallets, audit logging, and CSV/PDF reports. **Multi-currency** throughout
+(KES, UGX, TZS, RWF, NGN, GHS, ZMW, ZAR, USD, EUR, GBP), one currency per
+organization.
 
 **Stack:** Next.js 14 (App Router) + TypeScript + Tailwind CSS · Supabase
 (Postgres + Auth + Storage) · M-Pesa Daraja API · pdfkit · otplib (TOTP) ·
 Vitest.
+
+## SaaS model
+
+- **Organizations** (`/start`): "Create an organization" (name + currency +
+  owner account) or "Join with invite code" (members). Each org gets isolated
+  data (org-scoped RLS), its own config, invite code, and Starter-plan trial.
+- **Plans & billing** (`/admin/billing`): Starter (free, 50 members), Growth
+  ($12/mo, 500 members), Enterprise ($49/mo, unlimited). Plan assignment is
+  currently done by the SaaS operator; Stripe checkout is the planned
+  follow-up.
+- **Super-admin dashboard** (`/admin/super`, SaaS operator only): org KPIs,
+  MRR in USD (converted via editable FX rates), plan changes,
+  suspend/activate, FX rate management. Grant via SQL:
+  `update profiles set is_super_admin = true where email = 'you@example.org';`
+- **Currencies:** set per org at signup (`currency_code` in `organizations`
+  and `org_config`); every monetary row snapshots its `currency_code`.
+  M-Pesa STK/B2C is KES-only (Daraja) — non-KES orgs use manual payments
+  (stub mode allows all currencies for testing).
 
 ## Features
 
