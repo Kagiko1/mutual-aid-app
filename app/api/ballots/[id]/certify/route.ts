@@ -12,10 +12,16 @@ import { logAudit } from '@/lib/audit';
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { profile, admin } = await requireAdmin();
+    const ctx = await requireAdmin(request);
+    const { profile, admin } = ctx;
     checkTotp(request, profile);
 
-    const { data: ballot } = await admin.from('ballots').select('*').eq('id', params.id).single();
+    const { data: ballot } = await admin
+      .from('ballots')
+      .select('*')
+      .eq('id', params.id)
+      .eq('org_id', ctx.orgId)
+      .single();
     if (!ballot) return Response.json({ error: 'ballot not found' }, { status: 404 });
     if (ballot.status !== 'closed') {
       return Response.json(
@@ -36,6 +42,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       .from('ballots')
       .update({ status: 'certified', certified_at: now, results })
       .eq('id', params.id)
+      .eq('org_id', ctx.orgId)
       .select()
       .single();
     if (error) {
@@ -48,6 +55,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       entity: 'ballot',
       entityId: params.id,
       details: { results, totalVotes: (votes ?? []).length },
+      orgId: ctx.orgId,
     });
 
     return Response.json({ ballot: updated, results });

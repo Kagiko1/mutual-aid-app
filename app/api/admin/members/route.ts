@@ -18,7 +18,8 @@ const STATUSES = ['pending', 'active', 'ineligible', 'suspended'] as const;
 
 export async function POST(request: NextRequest) {
   try {
-    const { profile, admin } = await requireAdmin();
+    const ctx = await requireAdmin(request);
+    const { profile, admin } = ctx;
     const body = await request.json().catch(() => ({}));
     const { email, password, full_name, phone, national_id, role, status } = body as {
       email?: string;
@@ -54,10 +55,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const org = await getOrgConfig(admin);
+    const org = await getOrgConfig(admin, ctx.orgId);
     const waitingEndsAt = new Date(Date.now() + org.waitingPeriodDays * 86400000).toISOString();
     const { error: profileErr } = await admin.from('profiles').insert({
       id: created.user.id,
+      org_id: ctx.orgId,
       role: safeRole,
       full_name,
       email,
@@ -78,6 +80,7 @@ export async function POST(request: NextRequest) {
       entity: 'profile',
       entityId: created.user.id,
       details: { email, full_name, role: safeRole, status: safeStatus, waiting_ends_at: waitingEndsAt },
+      orgId: ctx.orgId,
     });
 
     return Response.json(

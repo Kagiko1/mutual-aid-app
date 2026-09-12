@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
-import { getOrgConfig } from '@/lib/orgConfig';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
+import { getOrgConfig } from '@/lib/admin/config';
 import { formatMoney } from '@/lib/money';
 import { uploadCaseDocument } from './actions';
 
@@ -20,26 +21,25 @@ function statusStyle(status: string) {
 }
 
 export default async function CaseDetailPage({ params }: { params: { id: string } }) {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  const admin = createAdminClient();
+  const { orgId, profile: ctxProfile } = await resolveOrgContext(admin);
 
-  const cfg = await getOrgConfig(supabase);
+  const cfg = await getOrgConfig(orgId);
 
-  const { data: c } = await supabase
+  const { data: c } = await admin
     .from('cases')
     .select('id, member_id, case_type, deceased_name, death_date, status, benefit_amount, admin_notes, created_at')
     .eq('id', params.id)
+    .eq('org_id', orgId)
     .maybeSingle();
 
-  if (!c || c.member_id !== user.id) notFound();
+  if (!c || c.member_id !== ctxProfile.id) notFound();
 
-  const { data: documents } = await supabase
+  const { data: documents } = await admin
     .from('case_documents')
     .select('id, doc_type, storage_path, created_at')
     .eq('case_id', c.id)
+    .eq('org_id', orgId)
     .order('created_at', { ascending: false });
 
   const showAdminNotes = ['reviewed', 'approved', 'disbursed'].includes(c.status);
@@ -72,7 +72,7 @@ export default async function CaseDetailPage({ params }: { params: { id: string 
         <p className="mt-4 text-sm text-gray-600">
           Benefit amount:{' '}
           <strong className="text-gray-900">
-            {formatMoney(Number(c.benefit_amount), cfg.currencySymbol, cfg.currencyCode)}
+            {formatMoney(Number(c.benefit_amount), cfg.currency_code)}
           </strong>
         </p>
 

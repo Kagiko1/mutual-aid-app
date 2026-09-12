@@ -41,30 +41,40 @@ export async function POST(request: NextRequest) {
       return Response.json(ACCEPTED);
     }
 
+    // Tenant scope: callbacks are unauthenticated, so the org comes from the
+    // disbursement row itself.
+    const orgId: string | null = (disb.org_id as string | null) ?? null;
+
     const params: { Key?: string; Value?: unknown }[] =
       result?.ResultParameters?.ResultParameter ?? [];
     const receiptParam = params.find((p) => p.Key === 'TransactionReceipt');
     const txReceipt = receiptParam?.Value != null ? String(receiptParam.Value) : originatorId;
 
     if (resultCode === 0) {
-      await admin
+      let completedUpdate = admin
         .from('disbursements')
         .update({ status: 'completed', mpesa_receipt: txReceipt })
         .eq('id', disb.id);
+      if (orgId) completedUpdate = completedUpdate.eq('org_id', orgId);
+      await completedUpdate;
       await logAudit(admin, {
         actorId: null,
         action: 'b2c_payment_completed',
         entity: 'disbursement',
         entityId: disb.id,
+        orgId,
         details: { originatorConversationId: originatorId, transactionReceipt: txReceipt },
       });
     } else {
-      await admin.from('disbursements').update({ status: 'failed' }).eq('id', disb.id);
+      let failedUpdate = admin.from('disbursements').update({ status: 'failed' }).eq('id', disb.id);
+      if (orgId) failedUpdate = failedUpdate.eq('org_id', orgId);
+      await failedUpdate;
       await logAudit(admin, {
         actorId: null,
         action: 'b2c_payment_failed',
         entity: 'disbursement',
         entityId: disb.id,
+        orgId,
         details: { originatorConversationId: originatorId, resultCode, resultDesc: result.ResultDesc },
       });
       console.warn(`[mpesa] B2C payout failed for ${originatorId}: ResultCode=${resultCode}`);

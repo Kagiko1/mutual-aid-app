@@ -1,4 +1,5 @@
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import BallotVoteForm from '@/components/member/BallotVoteForm';
 
 function statusStyle(status: string) {
@@ -12,15 +13,13 @@ function statusStyle(status: string) {
 }
 
 export default async function BallotsPage() {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
 
-  const { data: ballots } = await supabase
+  const { data: ballots } = await admin
     .from('ballots')
     .select('id, title, description, status, options, results, created_at')
+    .eq('org_id', orgId)
     .in('status', ['open', 'closed', 'certified'])
     .order('created_at', { ascending: false });
 

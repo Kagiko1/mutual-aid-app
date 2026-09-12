@@ -43,6 +43,20 @@ export async function POST(request: NextRequest) {
       return Response.json(ACCEPTED);
     }
 
+    // Tenant scope: callbacks are unauthenticated, so resolve the org from the
+    // payment -> invoice chain (payments recorded by stk-push carry org_id).
+    const { data: invRow } = payment.invoice_id
+      ? await admin
+          .from('invoices')
+          .select('id, org_id, currency_code')
+          .eq('id', payment.invoice_id)
+          .single()
+      : { data: null };
+    const orgId: string | null =
+      (payment.org_id as string | null) ?? (invRow?.org_id as string | null) ?? null;
+    const currencyCode: string =
+      (payment.currency_code as string | null) ?? (invRow?.currency_code as string | null) ?? 'KES';
+
     const items: { Name?: string; Value?: unknown }[] =
       cb?.CallbackMetadata?.Item ?? [];
     const receiptItem = items.find((i) => i.Name === 'MpesaReceiptNumber');
@@ -50,28 +64,31 @@ export async function POST(request: NextRequest) {
 
     if (resultCode === 0) {
       const now = new Date().toISOString();
-      await admin
+      let payUpdate = admin
         .from('payments')
         .update({ status: 'completed', mpesa_receipt: mpesaReceipt, paid_at: now })
         .eq('id', payment.id);
+      if (orgId) payUpdate = payUpdate.eq('org_id', orgId);
+      await payUpdate;
 
       let invoice: Record<string, unknown> | null = null;
       if (payment.invoice_id) {
-        const { data } = await admin
+        let invUpdate = admin
           .from('invoices')
           .update({ status: 'paid', paid_at: now })
-          .eq('id', payment.invoice_id)
-          .select()
-          .single();
+          .eq('id', payment.invoice_id);
+        if (orgId) invUpdate = invUpdate.eq('org_id', orgId);
+        const { data } = await invUpdate.select().single();
         invoice = data;
       }
 
       // AUTO-REACTIVATION: a member penalized to 'ineligible' becomes active again on payment.
-      const { data: profile } = await admin
+      let profQuery = admin
         .from('profiles')
         .select('id, status')
-        .eq('id', payment.member_id)
-        .single();
+        .eq('id', payment.member_id);
+      if (orgId) profQuery = profQuery.eq('org_id', orgId);
+      const { data: profile } = await profQuery.single();
       let reactivated = false;
       if (profile && profile.status === 'ineligible') {
         await admin.from('profiles').update({ status: 'active' }).eq('id', profile.id);
@@ -81,10 +98,11 @@ export async function POST(request: NextRequest) {
       await notifyMember(admin, {
         memberId: payment.member_id,
         title: 'Payment received',
-        body: `Your contribution of ${formatMoney(payment.amount)} has been received${
+        body: `Your contribution of ${formatMoney(payment.amount, currencyCode)} has been received${
           mpesaReceipt ? ` (receipt ${mpesaReceipt})` : ''
         }.${reactivated ? ' Your membership has been reactivated.' : ''}`,
         type: 'payment',
+        orgId,
       });
 
       await logAudit(admin, {
@@ -92,6 +110,7 @@ export async function POST(request: NextRequest) {
         action: 'payment_completed',
         entity: 'payment',
         entityId: payment.id,
+        orgId,
         details: {
           invoiceId: payment.invoice_id,
           mpesaReceipt,
@@ -101,12 +120,15 @@ export async function POST(request: NextRequest) {
         },
       });
     } else {
-      await admin.from('payments').update({ status: 'failed' }).eq('id', payment.id);
+      let failUpdate = admin.from('payments').update({ status: 'failed' }).eq('id', payment.id);
+      if (orgId) failUpdate = failUpdate.eq('org_id', orgId);
+      await failUpdate;
       await logAudit(admin, {
         actorId: null,
         action: 'payment_failed',
         entity: 'payment',
         entityId: payment.id,
+        orgId,
         details: { resultCode, resultDesc: cb?.ResultDesc },
       });
       console.warn(`[mpesa] STK payment failed for ${checkoutRequestId}: ResultCode=${resultCode}`);

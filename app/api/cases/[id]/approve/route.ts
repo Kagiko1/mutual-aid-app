@@ -26,7 +26,8 @@ import { formatMoney } from '@/lib/money';
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { profile, admin } = await requireAdmin();
+    const ctx = await requireAdmin(request);
+    const { profile, admin } = ctx;
     checkTotp(request, profile);
 
     const body = await request.json().catch(() => ({}));
@@ -42,7 +43,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       return Response.json({ error: 'signatureData is required' }, { status: 400 });
     }
 
-    const { data: theCase } = await admin.from('cases').select('*').eq('id', params.id).single();
+    const { data: theCase } = await admin.from('cases').select('*').eq('id', params.id).eq('org_id', ctx.orgId).single();
     if (!theCase) return Response.json({ error: 'case not found' }, { status: 404 });
     if (!['reviewed', 'pending_review'].includes(theCase.status)) {
       return Response.json(
@@ -51,7 +52,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       );
     }
 
-    const { data: member } = await admin.from('profiles').select('*').eq('id', theCase.member_id).single();
+    const { data: member } = await admin.from('profiles').select('*').eq('id', theCase.member_id).eq('org_id', ctx.orgId).single();
     if (!member) return Response.json({ error: 'case member not found' }, { status: 404 });
 
     const { data: beneficiaries } = await admin
@@ -71,7 +72,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       );
     }
 
-    const org = await getOrgConfig(admin);
+    const cfg = await getOrgConfig(admin, ctx.orgId);
     const benefitAmount: number = theCase.benefit_amount;
 
     // ---- Double-payout detection ----
@@ -81,15 +82,16 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     let deceasedProfile: { id: string; national_id: string | null; full_name: string } | null = null;
     const deceasedId = deceasedMemberId ?? theCase.deceased_member_id ?? null;
     if (deceasedId) {
-      const { data } = await admin.from('profiles').select('id, national_id, full_name').eq('id', deceasedId).single();
+      const { data } = await admin.from('profiles').select('id, national_id, full_name').eq('id', deceasedId).eq('org_id', ctx.orgId).single();
       deceasedProfile = data;
     }
     let pairedCaseId: string | null = null;
     if (deceasedProfile?.national_id) {
-      const { data: allDependents } = await admin.from('dependents').select('id, member_id, full_name, national_id');
+      const { data: allDependents } = await admin.from('dependents').select('id, member_id, full_name, national_id').eq('org_id', ctx.orgId);
       const { data: depMembers } = await admin
         .from('profiles')
         .select('id, full_name')
+        .eq('org_id', ctx.orgId)
         .in('id', ((allDependents ?? []) as { member_id: string }[]).map((d) => d.member_id));
       const memberNames = Object.fromEntries(
         ((depMembers ?? []) as { id: string; full_name: string }[]).map((m) => [m.id, m.full_name]),
@@ -120,6 +122,8 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
             created_by_admin: true,
             admin_notes: `DOUBLE-PAYOUT pair of case ${theCase.id}: ${result.reason}`,
             paired_case_id: theCase.id,
+            org_id: ctx.orgId,
+            currency_code: cfg.currencyCode,
           })
           .select()
           .single();
@@ -131,6 +135,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
             action: 'double_payout_paired_case',
             entity: 'case',
             entityId: paired.id,
+            orgId: ctx.orgId,
             details: { originalCaseId: theCase.id, reason: result.reason },
           });
         }
@@ -139,6 +144,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
     // ---- Admin e-signature on approval ----
     await admin.from('signatures').insert({
+      org_id: ctx.orgId,
       member_id: profile.id,
       case_id: theCase.id,
       signature_type: signatureType,
@@ -150,16 +156,17 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
 
     // ---- Voucher ----
     const year = new Date().getFullYear();
-    const { count } = await admin.from('vouchers').select('id', { count: 'exact', head: true });
+    const { count } = await admin.from('vouchers').select('id', { count: 'exact', head: true }).eq('org_id', ctx.orgId);
     const voucherNo = `VCH-${year}-${String((count ?? 0) + 1).padStart(6, '0')}`;
     const { data: voucher, error: voucherErr } = await admin
       .from('vouchers')
       .insert({
+        org_id: ctx.orgId,
         case_id: theCase.id,
         voucher_no: voucherNo,
         amount: benefitAmount,
-        currency_code: org.currencyCode,
-        currency_symbol: org.currencySymbol,
+        currency_code: cfg.currencyCode,
+        currency_symbol: cfg.currencySymbol,
         issued_by: profile.id,
       })
       .select()
@@ -169,7 +176,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     }
 
     // ---- Invoicing ----
-    const { data: activeMembers } = await admin.from('profiles').select('id').eq('role', 'member').eq('status', 'active');
+    const { data: activeMembers } = await admin.from('profiles').select('id').eq('role', 'member').eq('status', 'active').eq('org_id', ctx.orgId);
     const deceasedIds = new Set([deceasedProfile?.id].filter(Boolean) as string[]);
     const memberIds = ((activeMembers ?? []) as { id: string }[])
       .map((m) => m.id)
@@ -178,19 +185,21 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       return Response.json({ error: 'no active members to invoice' }, { status: 400 });
     }
     const invoicing = computeCaseInvoices({
-      strategy: org.invoicingStrategy,
-      flatFeeMinor: org.flatCaseFeeMinor,
+      strategy: cfg.invoicingStrategy,
+      flatFeeMinor: cfg.flatCaseFeeMinor,
       benefitAmountMinor: benefitAmount,
       memberIds,
     });
     const dueDate = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
     await admin.from('invoices').insert(
       invoicing.invoices.map((inv) => ({
+        org_id: ctx.orgId,
         member_id: inv.memberId,
         case_id: theCase.id,
         amount: inv.amountMinor,
+        currency_code: cfg.currencyCode,
         status: 'pending',
-        strategy: org.invoicingStrategy,
+        strategy: cfg.invoicingStrategy,
         due_date: dueDate,
       })),
     );
@@ -201,30 +210,34 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       const { data: last } = await admin
         .from('reserve_ledger')
         .select('balance_after')
+        .eq('org_id', ctx.orgId)
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
       const balanceAfter = ((last as { balance_after: number } | null)?.balance_after ?? 0) + surplus;
       await admin.from('reserve_ledger').insert({
+        org_id: ctx.orgId,
         amount: surplus,
+        currency_code: cfg.currencyCode,
         direction: 'in',
         reason: `Invoicing surplus from case ${theCase.id}`,
         case_id: theCase.id,
         balance_after: balanceAfter,
       });
-      const { data: fund } = await admin.from('funds').select('id, balance').eq('name', 'Reserve Fund').single();
+      const { data: fund } = await admin.from('funds').select('id, balance').eq('name', 'Reserve Fund').eq('org_id', ctx.orgId).single();
       if (fund) {
         await admin.from('funds').update({ balance: (fund as { balance: number }).balance + surplus }).eq('id', (fund as { id: string }).id);
       } else {
-        await admin.from('funds').insert({ name: 'Reserve Fund', balance: surplus });
+        await admin.from('funds').insert({ org_id: ctx.orgId, name: 'Reserve Fund', balance: surplus, currency_code: cfg.currencyCode });
       }
     }
 
     await notifyMember(admin, {
       memberId: theCase.member_id,
       title: 'Benefit approved',
-      body: `Your welfare case for ${theCase.deceased_name} has been approved for ${formatMoney(benefitAmount, org.currencySymbol, org.currencyCode)}. Voucher ${voucherNo} issued.`,
+      body: `Your welfare case for ${theCase.deceased_name} has been approved for ${formatMoney(benefitAmount, cfg.currencyCode)}. Voucher ${voucherNo} issued.`,
       type: 'case',
+      orgId: ctx.orgId,
     });
 
     await logAudit(admin, {
@@ -232,6 +245,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       action: 'case_approved',
       entity: 'case',
       entityId: theCase.id,
+      orgId: ctx.orgId,
       details: {
         voucherId: voucher.id,
         voucherNo,

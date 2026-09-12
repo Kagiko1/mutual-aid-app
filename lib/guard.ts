@@ -1,8 +1,9 @@
 /**
  * Auth guards for API routes.
  *
- * - requireMember(): any authenticated user with a profiles row.
- * - requireAdmin():  requireMember() + role === 'admin'.
+ * - requireMember(): any authenticated user with a profiles row (+ org context).
+ * - requireAdmin():  requireMember() + role in ('admin','owner').
+ * - requireSuperAdmin(): SaaS operator (profiles.is_super_admin).
  * - checkTotp():     MFA gate for sensitive admin actions. TOTP must be
  *                    enabled on the admin profile; the current code must be
  *                    supplied in the `x-totp-code` header. If TOTP is not
@@ -12,6 +13,7 @@
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createClient, createAdminClient } from './supabase/server';
+import { resolveOrgContext, orgSlugFromRequest, type OrgContext } from './org-context';
 import { verifyTotp } from './totp';
 
 export interface ProfileRow {
@@ -24,6 +26,8 @@ export interface ProfileRow {
   status: string;
   totp_secret: string | null;
   totp_enabled: boolean;
+  is_super_admin: boolean;
+  org_id: string;
   [key: string]: unknown;
 }
 
@@ -34,13 +38,23 @@ export interface GuardContext {
   supabase: SupabaseClient;
   /** Service-role client (bypasses RLS) — use for writes. */
   admin: SupabaseClient;
+  /** Tenant scope for this request. */
+  orgId: string;
+  org: OrgContext['org'];
+  isSuperAdmin: boolean;
 }
 
 function unauthorized(): Response {
   return Response.json({ error: 'unauthorized', message: 'Sign in required' }, { status: 401 });
 }
 
-export async function requireMember(): Promise<GuardContext> {
+const ADMIN_ROLES = new Set(['admin', 'owner']);
+
+export function isOrgAdminRole(role: string): boolean {
+  return ADMIN_ROLES.has(role);
+}
+
+export async function requireMember(request?: Request): Promise<GuardContext> {
   const supabase = createClient();
   const {
     data: { user },
@@ -52,13 +66,31 @@ export async function requireMember(): Promise<GuardContext> {
   if (error || !profile) {
     throw Response.json({ error: 'forbidden', message: 'No member profile found' }, { status: 403 });
   }
-  return { userId: user.id, profile: profile as ProfileRow, supabase, admin };
+  const orgSlug = request ? orgSlugFromRequest(request) : undefined;
+  const ctx = await resolveOrgContext(admin, orgSlug);
+  return {
+    userId: user.id,
+    profile: profile as ProfileRow,
+    supabase,
+    admin,
+    orgId: ctx.orgId,
+    org: ctx.org,
+    isSuperAdmin: ctx.isSuperAdmin,
+  };
 }
 
-export async function requireAdmin(): Promise<GuardContext> {
-  const ctx = await requireMember();
-  if (ctx.profile.role !== 'admin') {
+export async function requireAdmin(request?: Request): Promise<GuardContext> {
+  const ctx = await requireMember(request);
+  if (!isOrgAdminRole(ctx.profile.role) && !ctx.isSuperAdmin) {
     throw Response.json({ error: 'forbidden', message: 'Admin access required' }, { status: 403 });
+  }
+  return ctx;
+}
+
+export async function requireSuperAdmin(): Promise<GuardContext> {
+  const ctx = await requireMember();
+  if (!ctx.isSuperAdmin) {
+    throw Response.json({ error: 'forbidden', message: 'Super admin access required' }, { status: 403 });
   }
   return ctx;
 }

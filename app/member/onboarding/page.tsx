@@ -57,6 +57,29 @@ export default function OnboardingPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [finalStatus, setFinalStatus] = useState<'active' | 'pending' | null>(null);
+  // Resolved once: the member's own org (RLS allows reading own profile's org_id).
+  const [orgId, setOrgId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const supabase = createClient();
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) return;
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('org_id')
+          .eq('id', user.id)
+          .single();
+        if ((prof as any)?.org_id) setOrgId((prof as any).org_id as string);
+      } catch {
+        /* resolved server-side in actions; insert will fail loudly if missing */
+      }
+    };
+    load();
+  }, []);
 
   // Step 1
   const [fullName, setFullName] = useState('');
@@ -119,7 +142,9 @@ export default function OnboardingPage() {
         .from('kyc-docs')
         .upload(path, file, { upsert: true, contentType: file.type });
       if (upErr) throw new Error(upErr.message);
+      if (!orgId) throw new Error('Organization context not loaded yet. Please wait and try again.');
       const { error: insErr } = await supabase.from('kyc_docs').insert({
+        org_id: orgId,
         member_id: user.id,
         doc_type: docType,
         storage_path: path,

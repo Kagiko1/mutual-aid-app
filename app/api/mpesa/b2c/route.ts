@@ -17,7 +17,8 @@ import { logAudit } from '@/lib/audit';
 
 export async function POST(request: NextRequest) {
   try {
-    const { profile, admin } = await requireAdmin();
+    const ctx = await requireAdmin(request);
+    const { profile, admin } = ctx;
     checkTotp(request, profile);
 
     const body = await request.json().catch(() => ({}));
@@ -37,6 +38,7 @@ export async function POST(request: NextRequest) {
         .from('disbursements')
         .select('*')
         .eq('id', disbursementId)
+        .eq('org_id', ctx.orgId)
         .single();
       if (error || !data) {
         return Response.json({ error: 'disbursement not found' }, { status: 404 });
@@ -48,6 +50,7 @@ export async function POST(request: NextRequest) {
           .from('beneficiaries')
           .select('phone')
           .eq('id', (data as { beneficiary_id: string }).beneficiary_id)
+          .eq('org_id', ctx.orgId)
           .single();
         targetPhone = (ben as { phone?: string | null } | null)?.phone ?? undefined;
       }
@@ -74,7 +77,8 @@ export async function POST(request: NextRequest) {
           mpesa_receipt: result.originatorConversationId,
           status: isStub() ? 'completed' : 'pending',
         })
-        .eq('id', disb.id);
+        .eq('id', disb.id)
+        .eq('org_id', ctx.orgId);
     }
 
     await logAudit(admin, {
@@ -82,6 +86,7 @@ export async function POST(request: NextRequest) {
       action: 'b2c_payment_sent',
       entity: 'disbursement',
       entityId: (disb?.id as string) ?? null,
+      orgId: ctx.orgId,
       details: {
         phone: targetPhone,
         amountMinor: amount,

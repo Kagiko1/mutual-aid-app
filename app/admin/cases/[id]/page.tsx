@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { getOrgConfig, money, fmtDate, fmtDay } from '@/lib/admin/config';
 import { Card, PageHeader, StatusPill, EmptyState } from '@/components/admin/ui';
 import CaseActions from '@/components/admin/CaseActions';
@@ -25,25 +26,26 @@ interface CaseRow {
 }
 
 export default async function CaseDetailPage({ params }: { params: { id: string } }) {
-  const cfg = await getOrgConfig();
-  const supabase = createClient();
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
+  const cfg = await getOrgConfig(orgId);
 
-  const { data: caseData } = await supabase.from('cases').select('*').eq('id', params.id).single();
+  const { data: caseData } = await admin.from('cases').select('*').eq('org_id', orgId).eq('id', params.id).single();
   if (!caseData) notFound();
   const c = caseData as CaseRow;
 
   const [{ data: member }, { data: docs }, { data: checklist }, { data: voucher }, { data: disbursements }, { data: beneficiaries }] =
     await Promise.all([
-      supabase.from('profiles').select('id, full_name, email, phone, national_id, status').eq('id', c.member_id).single(),
-      supabase.from('case_documents').select('*').eq('case_id', c.id).order('created_at', { ascending: true }),
-      supabase.from('claim_checklists').select('*').eq('case_type', c.case_type).maybeSingle(),
-      supabase.from('vouchers').select('*').eq('case_id', c.id).maybeSingle(),
-      supabase.from('disbursements').select('*').eq('case_id', c.id).order('created_at', { ascending: true }),
-      supabase.from('beneficiaries').select('*').eq('member_id', c.member_id).order('created_at', { ascending: true }),
+      admin.from('profiles').select('id, full_name, email, phone, national_id, status').eq('org_id', orgId).eq('id', c.member_id).single(),
+      admin.from('case_documents').select('*').eq('org_id', orgId).eq('case_id', c.id).order('created_at', { ascending: true }),
+      admin.from('claim_checklists').select('*').eq('org_id', orgId).eq('case_type', c.case_type).maybeSingle(),
+      admin.from('vouchers').select('*').eq('org_id', orgId).eq('case_id', c.id).maybeSingle(),
+      admin.from('disbursements').select('*').eq('org_id', orgId).eq('case_id', c.id).order('created_at', { ascending: true }),
+      admin.from('beneficiaries').select('*').eq('org_id', orgId).eq('member_id', c.member_id).order('created_at', { ascending: true }),
     ]);
 
   const { data: paired } = c.paired_case_id
-    ? await supabase.from('cases').select('id, deceased_name, status').eq('id', c.paired_case_id).single()
+    ? await admin.from('cases').select('id, deceased_name, status').eq('org_id', orgId).eq('id', c.paired_case_id).single()
     : { data: null };
 
   const m = member as { full_name: string; email: string | null; phone: string | null; national_id: string | null; status: string } | null;

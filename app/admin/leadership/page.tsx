@@ -1,18 +1,21 @@
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { requireAdmin } from '@/lib/admin/guard';
 import { Card, PageHeader, EmptyState, inputCls, btnPrimary, btnDanger } from '@/components/admin/ui';
 
 export default async function LeadershipPage() {
-  const supabase = createClient();
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
 
   async function createContact(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
+    const admin = createAdminClient();
     const name = String(formData.get('name') || '').trim();
     if (!name) return;
-    await supabase.from('leadership_contacts').insert({
+    await admin.from('leadership_contacts').insert({
+      org_id: orgId,
       name,
       role: String(formData.get('role') || '').trim(),
       phone: String(formData.get('phone') || '').trim() || null,
@@ -24,12 +27,12 @@ export default async function LeadershipPage() {
   async function deleteContact(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
-    await supabase.from('leadership_contacts').delete().eq('id', String(formData.get('id')));
+    const admin = createAdminClient();
+    await admin.from('leadership_contacts').delete().eq('org_id', orgId).eq('id', String(formData.get('id')));
     revalidatePath('/admin/leadership');
   }
 
-  const { data: contacts } = await supabase.from('leadership_contacts').select('*').order('created_at', { ascending: true });
+  const { data: contacts } = await admin.from('leadership_contacts').select('*').eq('org_id', orgId).order('created_at', { ascending: true });
   const rows = (contacts ?? []) as { id: string; name: string; role: string; phone: string | null; email: string | null }[];
 
   return (

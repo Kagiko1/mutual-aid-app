@@ -12,9 +12,10 @@ import { logAudit } from '@/lib/audit';
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { userId, profile, admin } = await requireMember();
+    const ctx = await requireMember(request);
+    const { userId, profile, admin } = ctx;
 
-    const { data: theCase } = await admin.from('cases').select('id, member_id').eq('id', params.id).single();
+    const { data: theCase } = await admin.from('cases').select('id, member_id').eq('id', params.id).eq('org_id', ctx.orgId).single();
     if (!theCase) return Response.json({ error: 'case not found' }, { status: 404 });
     if (profile.role !== 'admin' && theCase.member_id !== userId) {
       return Response.json({ error: 'forbidden', message: 'Not your case' }, { status: 403 });
@@ -42,6 +43,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     const { data: doc, error: docErr } = await admin
       .from('case_documents')
       .insert({
+        org_id: ctx.orgId,
         case_id: params.id,
         doc_type: docType,
         storage_path: storagePath,
@@ -58,6 +60,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       action: 'case_document_uploaded',
       entity: 'case_document',
       entityId: doc.id,
+      orgId: ctx.orgId,
       details: { caseId: params.id, docType, storagePath },
     });
 

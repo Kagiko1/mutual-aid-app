@@ -1,9 +1,22 @@
+import { cookies } from 'next/headers';
 import { requireAdmin } from '@/lib/admin/guard';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { signOut } from './actions';
 import AdminNav from '@/components/admin/AdminNav';
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await requireAdmin();
+  const admin = createAdminClient();
+  const { isSuperAdmin } = await resolveOrgContext(admin);
+
+  let orgs: { slug: string; name: string }[] = [];
+  let currentOrgSlug: string | null = null;
+  if (isSuperAdmin) {
+    const { data } = await admin.from('organizations').select('slug, name').order('name');
+    orgs = ((data ?? []) as { slug: string; name: string }[]);
+    currentOrgSlug = cookies().get('view_org')?.value ?? null;
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -38,7 +51,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <div className="mx-auto flex max-w-7xl gap-6 px-6 py-6">
         <aside className="w-52 shrink-0">
           <div className="sticky top-6">
-            <AdminNav />
+            <AdminNav isSuperAdmin={isSuperAdmin} orgs={orgs} currentOrgSlug={currentOrgSlug} />
           </div>
         </aside>
         <main className="min-w-0 flex-1">{children}</main>

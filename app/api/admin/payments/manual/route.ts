@@ -11,13 +11,13 @@ import { requireAdmin, checkTotp, handleGuardError } from '@/lib/guard';
 import { logAudit } from '@/lib/audit';
 import { notifyMember } from '@/lib/notify';
 import { formatMoney } from '@/lib/money';
-import { getOrgConfig } from '@/lib/org';
 
 const CHANNELS = ['manual', 'bank'];
 
 export async function POST(request: NextRequest) {
   try {
-    const { profile, admin } = await requireAdmin();
+    const ctx = await requireAdmin(request);
+    const { profile, admin } = ctx;
     checkTotp(request, profile);
 
     const body = await request.json().catch(() => ({}));
@@ -36,19 +36,27 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: `channel must be one of: ${CHANNELS.join(', ')}` }, { status: 400 });
     }
 
-    const { data: invoice } = await admin.from('invoices').select('*').eq('id', invoiceId).single();
+    const { data: invoice } = await admin
+      .from('invoices')
+      .select('*')
+      .eq('id', invoiceId)
+      .eq('org_id', ctx.orgId)
+      .single();
     if (!invoice) return Response.json({ error: 'invoice not found' }, { status: 404 });
     if (invoice.status === 'paid') {
       return Response.json({ error: 'invoice already paid' }, { status: 400 });
     }
+    const currencyCode: string = invoice.currency_code ?? 'KES';
 
     const now = new Date().toISOString();
     const { data: payment, error: payErr } = await admin
       .from('payments')
       .insert({
+        org_id: ctx.orgId,
         member_id: invoice.member_id,
         invoice_id: invoice.id,
         amount: amountMinor,
+        currency_code: currencyCode,
         channel: ch,
         mpesa_receipt: mpesaReceipt ?? null,
         status: 'completed',
@@ -61,13 +69,14 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'failed to record payment', message: payErr?.message }, { status: 500 });
     }
 
-    await admin.from('invoices').update({ status: 'paid', paid_at: now }).eq('id', invoice.id);
+    await admin.from('invoices').update({ status: 'paid', paid_at: now }).eq('id', invoice.id).eq('org_id', ctx.orgId);
 
     // AUTO-REACTIVATION (mirrors /api/mpesa/callback)
     const { data: memberProfile } = await admin
       .from('profiles')
       .select('id, status')
       .eq('id', invoice.member_id)
+      .eq('org_id', ctx.orgId)
       .single();
     let reactivated = false;
     if (memberProfile && memberProfile.status === 'ineligible') {
@@ -75,14 +84,14 @@ export async function POST(request: NextRequest) {
       reactivated = true;
     }
 
-    const org = await getOrgConfig(admin);
     await notifyMember(admin, {
       memberId: invoice.member_id,
       title: 'Payment recorded',
-      body: `A ${ch} payment of ${formatMoney(amountMinor as number, org.currencySymbol, org.currencyCode)} has been recorded against your invoice.${
+      body: `A ${ch} payment of ${formatMoney(amountMinor as number, currencyCode)} has been recorded against your invoice.${
         reactivated ? ' Your membership has been reactivated.' : ''
       }`,
       type: 'payment',
+      orgId: ctx.orgId,
     });
 
     await logAudit(admin, {
@@ -90,6 +99,7 @@ export async function POST(request: NextRequest) {
       action: 'manual_payment_recorded',
       entity: 'payment',
       entityId: payment.id,
+      orgId: ctx.orgId,
       details: { invoiceId: invoice.id, amountMinor, channel: ch, reactivated },
     });
 

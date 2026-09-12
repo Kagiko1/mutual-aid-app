@@ -1,21 +1,24 @@
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { requireAdmin } from '@/lib/admin/guard';
 import { fmtDate } from '@/lib/admin/config';
 import { Card, PageHeader, EmptyState, inputCls, btnPrimary, btnDanger } from '@/components/admin/ui';
 import NotifyButton from '@/components/admin/NotifyButton';
 
 export default async function EventsPage() {
-  const supabase = createClient();
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
 
   async function createEvent(formData: FormData) {
     'use server';
     const session = await requireAdmin();
-    const supabase = createClient();
+    const admin = createAdminClient();
     const title = String(formData.get('title') || '').trim();
     if (!title) return;
     const rawDate = String(formData.get('event_date') || '');
-    await supabase.from('events').insert({
+    await admin.from('events').insert({
+      org_id: orgId,
       title,
       description: String(formData.get('description') || '').trim() || null,
       event_date: rawDate ? new Date(rawDate).toISOString() : new Date().toISOString(),
@@ -28,12 +31,12 @@ export default async function EventsPage() {
   async function deleteEvent(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
-    await supabase.from('events').delete().eq('id', String(formData.get('id')));
+    const admin = createAdminClient();
+    await admin.from('events').delete().eq('org_id', orgId).eq('id', String(formData.get('id')));
     revalidatePath('/admin/events');
   }
 
-  const { data: events } = await supabase.from('events').select('*').order('event_date', { ascending: false });
+  const { data: events } = await admin.from('events').select('*').eq('org_id', orgId).order('event_date', { ascending: false });
   const eventRows = (events ?? []) as {
     id: string;
     title: string;
@@ -43,7 +46,7 @@ export default async function EventsPage() {
   }[];
 
   const { data: attendance } = eventRows.length
-    ? await supabase.from('attendance').select('event_id, member_id, attended_at').in('event_id', eventRows.map((e) => e.id))
+    ? await admin.from('attendance').select('event_id, member_id, attended_at').eq('org_id', orgId).in('event_id', eventRows.map((e) => e.id))
     : { data: [] };
   const attRows = (attendance ?? []) as { event_id: string; member_id: string; attended_at: string }[];
   const attByEvent = new Map<string, { member_id: string; attended_at: string }[]>();
@@ -54,7 +57,7 @@ export default async function EventsPage() {
   }
   const attMemberIds = Array.from(new Set(attRows.map((a) => a.member_id)));
   const { data: profiles } = attMemberIds.length
-    ? await supabase.from('profiles').select('id, full_name').in('id', attMemberIds)
+    ? await admin.from('profiles').select('id, full_name').eq('org_id', orgId).in('id', attMemberIds)
     : { data: [] };
   const nameOf = new Map(((profiles ?? []) as { id: string; full_name: string }[]).map((p) => [p.id, p.full_name]));
 

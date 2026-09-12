@@ -12,12 +12,18 @@ import { hashVote } from '@/lib/engines/ballot';
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { userId, admin } = await requireMember();
+    const ctx = await requireMember(request);
+    const { userId, admin } = ctx;
     const body = await request.json().catch(() => ({}));
     const { optionId } = body as { optionId?: string };
     if (!optionId) return Response.json({ error: 'optionId is required' }, { status: 400 });
 
-    const { data: ballot } = await admin.from('ballots').select('*').eq('id', params.id).single();
+    const { data: ballot } = await admin
+      .from('ballots')
+      .select('*')
+      .eq('id', params.id)
+      .eq('org_id', ctx.orgId)
+      .single();
     if (!ballot) return Response.json({ error: 'ballot not found' }, { status: 404 });
     if (ballot.status !== 'open') {
       return Response.json(
@@ -35,6 +41,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     const voterHash = hashVote(userId, params.id, salt);
 
     const { error } = await admin.from('votes').insert({
+      org_id: ctx.orgId,
       ballot_id: params.id,
       voter_hash: voterHash,
       option_id: optionId,

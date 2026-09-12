@@ -1,16 +1,18 @@
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { fmtDay } from '@/lib/admin/config';
 import { PageHeader, StatusPill, EmptyState, inputCls, btnPrimary } from '@/components/admin/ui';
 
 const STATUSES = ['all', 'pending', 'active', 'ineligible', 'suspended'];
 
 export default async function MembersPage({ searchParams }: { searchParams: { q?: string; status?: string } }) {
-  const supabase = createClient();
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
   const q = (searchParams.q ?? '').trim();
   const status = searchParams.status ?? 'all';
 
-  let query = supabase.from('profiles').select('id, full_name, email, phone, national_id, role, status, joined_at').order('joined_at', { ascending: false });
+  let query = admin.from('profiles').select('id, full_name, email, phone, national_id, role, status, joined_at').eq('org_id', orgId).order('joined_at', { ascending: false });
   if (q) query = query.or(`full_name.ilike.%${q}%,email.ilike.%${q}%,phone.ilike.%${q}%`);
   if (status !== 'all') query = query.eq('status', status);
   const { data: profiles } = await query;

@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { getOrgConfig, money, fmtDate } from '@/lib/admin/config';
 import { PageHeader, StatusPill, EmptyState, inputCls, btnPrimary } from '@/components/admin/ui';
 
@@ -14,8 +15,9 @@ export default async function LedgerPage({
 }: {
   searchParams: { tab?: string; status?: string; channel?: string; q?: string };
 }) {
-  const cfg = await getOrgConfig();
-  const supabase = createClient();
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
+  const cfg = await getOrgConfig(orgId);
   const tab = searchParams.tab ?? 'combined';
   const status = searchParams.status ?? 'all';
   const channel = searchParams.channel ?? 'all';
@@ -24,13 +26,13 @@ export default async function LedgerPage({
   // member search → id set
   let memberIds: string[] | null = null;
   if (q) {
-    const { data } = await supabase.from('profiles').select('id').or(`full_name.ilike.%${q}%,email.ilike.%${q}%`);
+    const { data } = await admin.from('profiles').select('id').eq('org_id', orgId).or(`full_name.ilike.%${q}%,email.ilike.%${q}%`);
     memberIds = ((data ?? []) as { id: string }[]).map((p) => p.id);
   }
 
   const [{ data: invoices }, { data: payments }] = await Promise.all([
-    supabase.from('invoices').select('*').order('created_at', { ascending: false }).limit(500),
-    supabase.from('payments').select('*').order('created_at', { ascending: false }).limit(500),
+    admin.from('invoices').select('*').eq('org_id', orgId).order('created_at', { ascending: false }).limit(500),
+    admin.from('payments').select('*').eq('org_id', orgId).order('created_at', { ascending: false }).limit(500),
   ]);
   const invRows = ((invoices ?? []) as {
     id: string; member_id: string; amount: number; status: string; strategy: string | null; due_date: string | null; created_at: string;
@@ -43,7 +45,7 @@ export default async function LedgerPage({
 
   const allMemberIds = Array.from(new Set([...invRows.map((i) => i.member_id), ...payRows.map((p) => p.member_id)]));
   const { data: profiles } = allMemberIds.length
-    ? await supabase.from('profiles').select('id, full_name').in('id', allMemberIds)
+    ? await admin.from('profiles').select('id, full_name').eq('org_id', orgId).in('id', allMemberIds)
     : { data: [] };
   const nameOf = new Map(((profiles ?? []) as { id: string; full_name: string }[]).map((p) => [p.id, p.full_name]));
 

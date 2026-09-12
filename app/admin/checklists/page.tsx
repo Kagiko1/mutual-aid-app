@@ -1,10 +1,12 @@
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { requireAdmin } from '@/lib/admin/guard';
 import { Card, PageHeader, EmptyState, inputCls, btnPrimary, btnDanger } from '@/components/admin/ui';
 
 export default async function ChecklistsPage() {
-  const supabase = createClient();
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
 
   const parseDocs = (raw: unknown): string[] =>
     String((raw as string | null) ?? '')
@@ -15,11 +17,11 @@ export default async function ChecklistsPage() {
   async function createChecklist(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
+    const admin = createAdminClient();
     const case_type = String(formData.get('case_type') || '').trim().toLowerCase();
     if (!case_type) return;
-    await supabase.from('claim_checklists').upsert(
-      { case_type, required_docs: parseDocs(formData.get('required_docs')) },
+    await admin.from('claim_checklists').upsert(
+      { org_id: orgId, case_type, required_docs: parseDocs(formData.get('required_docs')) },
       { onConflict: 'case_type' },
     );
     revalidatePath('/admin/checklists');
@@ -28,10 +30,11 @@ export default async function ChecklistsPage() {
   async function updateChecklist(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
-    await supabase
+    const admin = createAdminClient();
+    await admin
       .from('claim_checklists')
       .update({ required_docs: parseDocs(formData.get('required_docs')) })
+      .eq('org_id', orgId)
       .eq('id', String(formData.get('id')));
     revalidatePath('/admin/checklists');
   }
@@ -39,12 +42,12 @@ export default async function ChecklistsPage() {
   async function deleteChecklist(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
-    await supabase.from('claim_checklists').delete().eq('id', String(formData.get('id')));
+    const admin = createAdminClient();
+    await admin.from('claim_checklists').delete().eq('org_id', orgId).eq('id', String(formData.get('id')));
     revalidatePath('/admin/checklists');
   }
 
-  const { data: lists } = await supabase.from('claim_checklists').select('*').order('case_type');
+  const { data: lists } = await admin.from('claim_checklists').select('*').eq('org_id', orgId).order('case_type');
   const rows = (lists ?? []) as { id: string; case_type: string; required_docs: unknown }[];
 
   return (

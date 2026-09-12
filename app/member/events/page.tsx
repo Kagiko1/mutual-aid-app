@@ -1,37 +1,42 @@
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 
 export default async function EventsPage() {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  const admin = createAdminClient();
+  const { orgId, profile } = await resolveOrgContext(admin);
 
-  const { data: events } = await supabase
+  const { data: events } = await admin
     .from('events')
     .select('id, title, description, event_date, location')
+    .eq('org_id', orgId)
     .gte('event_date', new Date().toISOString())
     .order('event_date', { ascending: true });
 
-  const { data: myAttendance } = await supabase
+  const { data: myAttendance } = await admin
     .from('attendance')
     .select('event_id')
-    .eq('member_id', user.id);
+    .eq('member_id', profile.id)
+    .eq('org_id', orgId);
   const attending = new Set((myAttendance ?? []).map((a: any) => a.event_id));
 
   async function rsvp(formData: FormData) {
     'use server';
-    const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) throw new Error('You must be signed in.');
+    const admin = createAdminClient();
+    const { orgId, profile } = await resolveOrgContext(admin);
     const eventId = formData.get('eventId');
     if (typeof eventId !== 'string' || !eventId) throw new Error('Missing event id.');
-    const { error } = await supabase
+    // Ensure the event belongs to this org before registering attendance.
+    const { data: ev } = await admin
+      .from('events')
+      .select('id')
+      .eq('id', eventId)
+      .eq('org_id', orgId)
+      .maybeSingle();
+    if (!ev) throw new Error('Event not found.');
+    const { error } = await admin
       .from('attendance')
-      .insert({ event_id: eventId, member_id: user.id });
+      .insert({ org_id: orgId, event_id: eventId, member_id: profile.id });
     // 23505 = unique violation → already registered; treat as success.
     if (error && (error as any).code !== '23505') throw new Error(error.message);
     revalidatePath('/member/events');

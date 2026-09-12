@@ -1,16 +1,18 @@
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { getOrgConfig, money, fmtDate } from '@/lib/admin/config';
 import { PageHeader, StatusPill, EmptyState } from '@/components/admin/ui';
 
 const STATUSES = ['all', 'draft', 'pending_review', 'reviewed', 'approved', 'disbursed', 'rejected'];
 
 export default async function CasesPage({ searchParams }: { searchParams: { status?: string } }) {
-  const cfg = await getOrgConfig();
-  const supabase = createClient();
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
+  const cfg = await getOrgConfig(orgId);
   const status = searchParams.status ?? 'all';
 
-  let query = supabase.from('cases').select('*').order('created_at', { ascending: false });
+  let query = admin.from('cases').select('*').eq('org_id', orgId).order('created_at', { ascending: false });
   if (status !== 'all') query = query.eq('status', status);
   const { data: cases } = await query;
   const caseRows = (cases ?? []) as {
@@ -26,7 +28,7 @@ export default async function CasesPage({ searchParams }: { searchParams: { stat
 
   const memberIds = Array.from(new Set(caseRows.map((c) => c.member_id)));
   const { data: profiles } = memberIds.length
-    ? await supabase.from('profiles').select('id, full_name').in('id', memberIds)
+    ? await admin.from('profiles').select('id, full_name').eq('org_id', orgId).in('id', memberIds)
     : { data: [] };
   const nameOf = new Map(((profiles ?? []) as { id: string; full_name: string }[]).map((p) => [p.id, p.full_name]));
 

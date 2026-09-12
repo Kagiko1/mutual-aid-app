@@ -7,13 +7,15 @@
 import { NextRequest } from 'next/server';
 import { requireMember, handleGuardError } from '@/lib/guard';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const { userId, admin } = await requireMember();
+    const ctx = await requireMember(request);
+    const { userId, admin } = ctx;
     const { data, error } = await admin
       .from('notifications')
       .select('*')
       .eq('member_id', userId)
+      .eq('org_id', ctx.orgId)
       .order('created_at', { ascending: false })
       .limit(100);
     if (error) {
@@ -27,7 +29,8 @@ export async function GET() {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const { userId, admin } = await requireMember();
+    const ctx = await requireMember(request);
+    const { userId, admin } = ctx;
     const body = await request.json().catch(() => ({}));
     const { ids, all } = body as { ids?: string[]; all?: boolean };
 
@@ -36,7 +39,11 @@ export async function PATCH(request: NextRequest) {
     }
 
     const now = new Date().toISOString();
-    let query = admin.from('notifications').update({ read_at: now }).eq('member_id', userId);
+    let query = admin
+      .from('notifications')
+      .update({ read_at: now })
+      .eq('member_id', userId)
+      .eq('org_id', ctx.orgId);
     if (!all && ids) query = query.in('id', ids);
     else query = query.is('read_at', null);
 

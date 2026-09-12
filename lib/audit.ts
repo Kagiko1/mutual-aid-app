@@ -8,10 +8,13 @@ export interface AuditInput {
   entity?: string | null;
   entityId?: string | null;
   details?: Record<string, unknown>;
+  /** Tenant scope — stored on the audit row. */
+  orgId?: string | null;
 }
 
 export async function logAudit(admin: SupabaseClient, input: AuditInput): Promise<void> {
   const { error } = await admin.from('audit_log').insert({
+    org_id: input.orgId ?? null,
     actor_id: input.actorId ?? null,
     action: input.action,
     entity: input.entity ?? null,

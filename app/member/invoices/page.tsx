@@ -1,6 +1,7 @@
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/server';
-import { getOrgConfig } from '@/lib/orgConfig';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
+import { getOrgConfig } from '@/lib/admin/config';
 import { formatMoney } from '@/lib/money';
 import PayButton from '@/components/member/PayButton';
 
@@ -30,35 +31,35 @@ export default async function InvoicesPage({
 }: {
   searchParams: { status?: string };
 }) {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  const admin = createAdminClient();
+  const { orgId, profile: ctxProfile } = await resolveOrgContext(admin);
 
-  const cfg = await getOrgConfig(supabase);
-  const { data: profile } = await supabase
+  const cfg = await getOrgConfig(orgId);
+  const { data: profile } = await admin
     .from('profiles')
     .select('id, phone, status')
-    .eq('id', user.id)
+    .eq('id', ctxProfile.id)
+    .eq('org_id', orgId)
     .maybeSingle();
 
   const activeFilter = FILTERS.includes(searchParams.status as any)
     ? (searchParams.status as string)
     : 'all';
 
-  let query = supabase
+  let query = admin
     .from('invoices')
     .select('id, amount, status, due_date, paid_at, cases!inner(deceased_name)')
-    .eq('member_id', user.id)
+    .eq('member_id', ctxProfile.id)
+    .eq('org_id', orgId)
     .order('due_date', { ascending: true });
   if (activeFilter !== 'all') query = query.eq('status', activeFilter);
   const { data: invoices } = await query;
 
-  const { data: payments } = await supabase
+  const { data: payments } = await admin
     .from('payments')
     .select('id, amount, channel, mpesa_receipt, status, paid_at, created_at')
-    .eq('member_id', user.id)
+    .eq('member_id', ctxProfile.id)
+    .eq('org_id', orgId)
     .order('created_at', { ascending: false })
     .limit(50);
 
@@ -105,7 +106,7 @@ export default async function InvoicesPage({
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
                   <p className="font-semibold text-gray-900">
-                    {formatMoney(Number(inv.amount), cfg.currencySymbol, cfg.currencyCode)}
+                    {formatMoney(Number(inv.amount), cfg.currency_code)}
                   </p>
                   <p className="mt-1 text-sm text-gray-600">
                     Case: {(inv.cases as any)?.deceased_name ?? '—'} · Due:{' '}
@@ -153,7 +154,7 @@ export default async function InvoicesPage({
                       {new Date(p.paid_at ?? p.created_at).toLocaleString()}
                     </td>
                     <td className="px-4 py-3 font-medium">
-                      {formatMoney(Number(p.amount), cfg.currencySymbol, cfg.currencyCode)}
+                      {formatMoney(Number(p.amount), cfg.currency_code)}
                     </td>
                     <td className="px-4 py-3 text-gray-600">{p.channel}</td>
                     <td className="px-4 py-3 text-gray-600">{p.mpesa_receipt ?? '—'}</td>

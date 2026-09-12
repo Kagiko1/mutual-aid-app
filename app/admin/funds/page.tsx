@@ -1,5 +1,6 @@
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { requireAdmin } from '@/lib/admin/guard';
 import { getOrgConfig, money } from '@/lib/admin/config';
 import { Card, PageHeader, EmptyState, inputCls, btnPrimary, btnDanger } from '@/components/admin/ui';
@@ -8,29 +9,31 @@ const TRIGGER_EVENTS = ['case_approval', 'case_disbursement', 'invoice_paid', 'm
 const ENGINES = ['flat_rate', 'proportional_split'];
 
 export default async function FundsPage() {
-  const cfg = await getOrgConfig();
-  const supabase = createClient();
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
+  const cfg = await getOrgConfig(orgId);
 
   async function createFund(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
+    const admin = createAdminClient();
     const name = String(formData.get('name') || '').trim();
-    if (name) await supabase.from('funds').insert({ name });
+    if (name) await admin.from('funds').insert({ org_id: orgId, name });
     revalidatePath('/admin/funds');
   }
 
   async function createTrigger(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
+    const admin = createAdminClient();
     let config: Record<string, unknown> = {};
     try {
       config = JSON.parse(String(formData.get('config') || '{}'));
     } catch {
       config = {};
     }
-    await supabase.from('fund_triggers').insert({
+    await admin.from('fund_triggers').insert({
+      org_id: orgId,
       fund_id: String(formData.get('fund_id')),
       trigger_event: String(formData.get('trigger_event')),
       engine: String(formData.get('engine')),
@@ -42,14 +45,14 @@ export default async function FundsPage() {
   async function deleteTrigger(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
-    await supabase.from('fund_triggers').delete().eq('id', String(formData.get('id')));
+    const admin = createAdminClient();
+    await admin.from('fund_triggers').delete().eq('org_id', orgId).eq('id', String(formData.get('id')));
     revalidatePath('/admin/funds');
   }
 
   const [{ data: funds }, { data: triggers }] = await Promise.all([
-    supabase.from('funds').select('*').order('name'),
-    supabase.from('fund_triggers').select('*').order('created_at', { ascending: false }),
+    admin.from('funds').select('*').eq('org_id', orgId).order('name'),
+    admin.from('fund_triggers').select('*').eq('org_id', orgId).order('created_at', { ascending: false }),
   ]);
   const fundRows = (funds ?? []) as { id: string; name: string; balance: number; policy: unknown }[];
   const triggerRows = (triggers ?? []) as {

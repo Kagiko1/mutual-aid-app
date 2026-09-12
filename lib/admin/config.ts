@@ -1,4 +1,4 @@
-import { createAdminClient } from '@/lib/supabase/server';
+import { createAdminClient, createClient } from '@/lib/supabase/server';
 import { formatMoney } from '@/lib/money';
 
 export interface OrgConfig {
@@ -29,11 +29,25 @@ export const CONFIG_DEFAULTS: OrgConfig = {
   annual_fee: 120000,
 };
 
-/** Read org_config key/value rows (jsonb scalars) into a typed object with defaults. */
-export async function getOrgConfig(): Promise<OrgConfig> {
+/**
+ * Read org_config key/value rows (jsonb scalars) into a typed object with defaults.
+ * Pass an orgId explicitly, or it resolves from the current session's profile.
+ */
+export async function getOrgConfig(orgId?: string): Promise<OrgConfig> {
   try {
-    const supabase = createAdminClient();
-    const { data } = await supabase.from('org_config').select('key, value');
+    const admin = createAdminClient();
+    let id = orgId;
+    if (!id) {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (user) {
+        const { data: p } = await admin.from('profiles').select('org_id').eq('id', user.id).single();
+        id = (p as { org_id?: string } | null)?.org_id;
+      }
+    }
+    const { data } = await admin.from('org_config').select('key, value').eq('org_id', id ?? '');
     const cfg: OrgConfig = { ...CONFIG_DEFAULTS };
     for (const row of ((data ?? []) as { key: string; value: unknown }[])) {
       if (row.key in cfg) {
@@ -46,9 +60,9 @@ export async function getOrgConfig(): Promise<OrgConfig> {
   }
 }
 
-/** Format a minor-units amount using the org's live currency config. */
+/** Format a minor-units amount in the org's currency. */
 export function money(amountMinor: number | null | undefined, cfg: OrgConfig): string {
-  return formatMoney(Number(amountMinor ?? 0), cfg.currency_symbol, cfg.currency_code);
+  return formatMoney(Number(amountMinor ?? 0), cfg.currency_code);
 }
 
 export function fmtDate(iso: string | null | undefined): string {

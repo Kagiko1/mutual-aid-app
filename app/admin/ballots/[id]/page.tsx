@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { requireAdmin } from '@/lib/admin/guard';
 import { fmtDate } from '@/lib/admin/config';
 import { Card, PageHeader, StatusPill } from '@/components/admin/ui';
@@ -19,22 +20,23 @@ interface BallotRow {
 }
 
 export default async function BallotDetailPage({ params }: { params: { id: string } }) {
-  const supabase = createClient();
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
 
   async function closeBallot() {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
-    await supabase.from('ballots').update({ status: 'closed' }).eq('id', params.id);
+    const admin = createAdminClient();
+    await admin.from('ballots').update({ status: 'closed' }).eq('org_id', orgId).eq('id', params.id);
     revalidatePath(`/admin/ballots/${params.id}`);
   }
 
-  const { data: ballot } = await supabase.from('ballots').select('*').eq('id', params.id).single();
+  const { data: ballot } = await admin.from('ballots').select('*').eq('org_id', orgId).eq('id', params.id).single();
   if (!ballot) notFound();
   const b = ballot as BallotRow;
   const options = (b.options ?? []) as { id: string; label: string }[];
 
-  const { count: voteCount } = await supabase.from('votes').select('id', { count: 'exact', head: true }).eq('ballot_id', b.id);
+  const { count: voteCount } = await admin.from('votes').select('id', { count: 'exact', head: true }).eq('org_id', orgId).eq('ballot_id', b.id);
 
   const labelOf = new Map(options.map((o) => [o.id, o.label]));
   // results may be an object {optionId: votes} or an array [{option_id, votes}]

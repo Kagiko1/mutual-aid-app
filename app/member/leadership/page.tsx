@@ -1,10 +1,13 @@
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 
 export default async function LeadershipPage() {
-  const supabase = createClient();
-  const { data: contacts } = await supabase
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
+  const { data: contacts } = await admin
     .from('leadership_contacts')
     .select('id, name, role, phone, email')
+    .eq('org_id', orgId)
     .order('created_at', { ascending: true });
 
   return (

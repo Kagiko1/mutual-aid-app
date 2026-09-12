@@ -12,7 +12,8 @@ import { notifyMember } from '@/lib/notify';
 
 export async function PATCH(request: NextRequest, { params }: { params: { depId: string } }) {
   try {
-    const { profile, admin } = await requireAdmin();
+    const ctx = await requireAdmin(request);
+    const { profile, admin } = ctx;
     const body = await request.json().catch(() => ({}));
     const { verification_status } = body as { verification_status?: string };
 
@@ -32,6 +33,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { depId:
         verified_at: now,
       })
       .eq('id', params.depId)
+      .eq('org_id', ctx.orgId)
       .select()
       .single();
     if (error || !dependent) {
@@ -43,6 +45,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { depId:
       title: `Dependent ${verification_status}`,
       body: `${dependent.full_name} has been ${verification_status} by the admin.`,
       type: 'dependent',
+      orgId: ctx.orgId,
     });
 
     await logAudit(admin, {
@@ -51,6 +54,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { depId:
       entity: 'dependent',
       entityId: dependent.id,
       details: { member_id: dependent.member_id },
+      orgId: ctx.orgId,
     });
 
     return Response.json({ dependent });

@@ -28,12 +28,13 @@ function renderVoucherPdf(build: (doc: PDFKit.PDFDocument) => void): Promise<Buf
 
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { userId, profile, admin } = await requireMember();
+    const ctx = await requireMember(request);
+    const { userId, profile, admin } = ctx;
 
-    const { data: voucher } = await admin.from('vouchers').select('*').eq('id', params.id).single();
+    const { data: voucher } = await admin.from('vouchers').select('*').eq('id', params.id).eq('org_id', ctx.orgId).single();
     if (!voucher) return Response.json({ error: 'voucher not found' }, { status: 404 });
 
-    const { data: theCase } = await admin.from('cases').select('*').eq('id', voucher.case_id).single();
+    const { data: theCase } = await admin.from('cases').select('*').eq('id', voucher.case_id).eq('org_id', ctx.orgId).single();
     if (!theCase) return Response.json({ error: 'case not found' }, { status: 404 });
     if (profile.role !== 'admin' && theCase.member_id !== userId) {
       return Response.json({ error: 'forbidden' }, { status: 403 });
@@ -45,7 +46,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
       .eq('member_id', theCase.member_id);
     const bens = (beneficiaries ?? []) as { id: string; full_name: string; percentage: number | string }[];
 
-    const org = await getOrgConfig(admin);
+    const org = await getOrgConfig(admin, ctx.orgId);
     let rows: { name: string; pct: number; amount: number }[] = [];
     if (bens.length > 0) {
       const allocs = splitBeneficiaries(
@@ -71,7 +72,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
       doc.text(`Voucher No: ${voucher.voucher_no}`);
       doc.text(`Issued: ${issuedAt}`);
       doc.text(`Case: ${theCase.case_type} — ${theCase.deceased_name}`);
-      doc.text(`Benefit amount: ${formatMoney(voucher.amount, voucher.currency_symbol, voucher.currency_code)}`);
+      doc.text(`Benefit amount: ${formatMoney(voucher.amount, voucher.currency_code)}`);
       doc.moveDown();
 
       doc.fontSize(13).text('Beneficiary split', { underline: true });
@@ -86,11 +87,11 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
         if (y > 740) { doc.addPage(); y = 80; }
         doc.text(r.name, colName, y);
         doc.text(r.pct.toFixed(2), colPct, y);
-        doc.text(formatMoney(r.amount, voucher.currency_symbol, voucher.currency_code), colAmt, y);
+        doc.text(formatMoney(r.amount, voucher.currency_code), colAmt, y);
         y += 18;
       }
       doc.moveDown(2);
-      doc.fontSize(11).text(`Total: ${formatMoney(voucher.amount, voucher.currency_symbol, voucher.currency_code)}`);
+      doc.fontSize(11).text(`Total: ${formatMoney(voucher.amount, voucher.currency_code)}`);
       doc.moveDown(3);
       doc.text('Authorised signature: ______________________________');
       doc.text(`Voucher ${voucher.voucher_no} — generated ${issuedAt}`);

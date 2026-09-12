@@ -22,6 +22,7 @@ interface GateState {
   currencyCode: string;
   currencySymbol: string;
   requiredDocs: string[];
+  orgId: string | null;
 }
 
 export default function RaiseCasePage() {
@@ -35,6 +36,7 @@ export default function RaiseCasePage() {
     currencyCode: 'KES',
     currencySymbol: 'KSh',
     requiredDocs: [],
+    orgId: null,
   });
   const [caseType, setCaseType] = useState('death');
   const [deceasedName, setDeceasedName] = useState('');
@@ -55,9 +57,22 @@ export default function RaiseCasePage() {
       }
       const { data: profile } = await supabase
         .from('profiles')
-        .select('status, joined_at')
+        .select('status, joined_at, org_id')
         .eq('id', user.id)
         .maybeSingle();
+      // Resolve the member's org + its currency (RLS allows reading these).
+      const profileOrgId = (profile as any)?.org_id as string | undefined;
+      let currencyCode = 'KES';
+      if (profileOrgId) {
+        const { data: orgRow } = await supabase
+          .from('organizations')
+          .select('currency_code')
+          .eq('id', profileOrgId)
+          .maybeSingle();
+        if (typeof (orgRow as any)?.currency_code === 'string') {
+          currencyCode = (orgRow as any).currency_code as string;
+        }
+      }
       const { data: cfg } = await supabase.from('org_config').select('key, value');
       const map = new Map((cfg ?? []).map((r: any) => [r.key, r.value]));
       const num = (k: string, d: number) => {
@@ -75,11 +90,12 @@ export default function RaiseCasePage() {
         joinedAt: profile?.joined_at ?? null,
         waitingDays: num('waiting_period_days', 180),
         benefitAmount: num('benefit_amount', 0),
-        currencyCode: typeof map.get('currency_code') === 'string' ? (map.get('currency_code') as string) : 'KES',
+        currencyCode,
         currencySymbol: typeof map.get('currency_symbol') === 'string' ? (map.get('currency_symbol') as string) : 'KSh',
         requiredDocs: Array.isArray((checklist as any)?.required_docs)
           ? (checklist as any).required_docs
           : [],
+        orgId: profileOrgId ?? null,
       });
     };
     load();
@@ -140,9 +156,12 @@ export default function RaiseCasePage() {
       if (!user) throw new Error('You must be signed in.');
 
       // 1. Create the case first.
+      if (!gate.orgId) throw new Error('Organization context not loaded yet. Please reload the page.');
       const { data: newCase, error: caseError } = await supabase
         .from('cases')
         .insert({
+          org_id: gate.orgId,
+          currency_code: gate.currencyCode,
           member_id: user.id,
           case_type: caseType,
           deceased_name: deceasedName.trim(),
@@ -164,6 +183,7 @@ export default function RaiseCasePage() {
             .upload(path, file, { contentType: file.type });
           if (upErr) throw new Error(`Upload failed for ${file.name}: ${upErr.message}`);
           const { error: docErr } = await supabase.from('case_documents').insert({
+            org_id: gate.orgId,
             case_id: caseId,
             doc_type: 'supporting_document',
             storage_path: path,
@@ -190,7 +210,7 @@ export default function RaiseCasePage() {
       <h1 className="text-2xl font-bold text-gray-900">Raise a case</h1>
       <p className="mt-1 text-sm text-gray-600">
         Standard benefit:{' '}
-        <strong>{formatMoney(gate.benefitAmount, gate.currencySymbol, gate.currencyCode)}</strong>
+        <strong>{formatMoney(gate.benefitAmount, gate.currencyCode)}</strong>
       </p>
 
       <form onSubmit={handleSubmit} className="mt-6 space-y-4 rounded-xl border bg-white p-6 shadow-sm">

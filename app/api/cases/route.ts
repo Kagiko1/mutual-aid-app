@@ -12,13 +12,15 @@ const CASE_TYPES = ['death', 'medical', 'other'];
 
 export async function GET(request: NextRequest) {
   try {
-    const { admin } = await requireAdmin();
+    const ctx = await requireAdmin(request);
+    const { admin } = ctx;
     const status = request.nextUrl.searchParams.get('status');
     const search = request.nextUrl.searchParams.get('search');
 
     let query = admin
       .from('cases')
       .select('*')
+      .eq('org_id', ctx.orgId)
       .order('created_at', { ascending: false })
       .limit(200);
     if (status) query = query.eq('status', status);
@@ -34,7 +36,7 @@ export async function GET(request: NextRequest) {
     const memberIds = Array.from(new Set(cases.map((c) => c.member_id as string)));
     let names: Record<string, string> = {};
     if (memberIds.length > 0) {
-      const { data: profiles } = await admin.from('profiles').select('id, full_name').in('id', memberIds);
+      const { data: profiles } = await admin.from('profiles').select('id, full_name').in('id', memberIds).eq('org_id', ctx.orgId);
       names = Object.fromEntries(((profiles ?? []) as { id: string; full_name: string }[]).map((p) => [p.id, p.full_name]));
     }
     const enriched = cases.map((c) => ({ ...c, member_name: names[c.member_id as string] ?? null }));
@@ -46,7 +48,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { profile, admin } = await requireAdmin();
+    const ctx = await requireAdmin(request);
+    const { profile, admin } = ctx;
     const body = await request.json().catch(() => ({}));
     const { memberId, case_type, deceased_name, death_date, benefit_amount } = body as {
       memberId?: string;
@@ -66,14 +69,14 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: `case_type must be one of: ${CASE_TYPES.join(', ')}` }, { status: 400 });
     }
 
-    const { data: member } = await admin.from('profiles').select('id').eq('id', memberId).single();
+    const { data: member } = await admin.from('profiles').select('id').eq('id', memberId).eq('org_id', ctx.orgId).single();
     if (!member) return Response.json({ error: 'member not found' }, { status: 404 });
 
-    const org = await getOrgConfig(admin);
+    const cfg = await getOrgConfig(admin, ctx.orgId);
     const benefitAmount =
       Number.isInteger(benefit_amount) && (benefit_amount as number) > 0
         ? (benefit_amount as number)
-        : org.benefitAmountMinor;
+        : cfg.benefitAmountMinor;
 
     const { data: newCase, error } = await admin
       .from('cases')
@@ -85,6 +88,8 @@ export async function POST(request: NextRequest) {
         benefit_amount: benefitAmount,
         status: 'draft',
         created_by_admin: true,
+        org_id: ctx.orgId,
+        currency_code: cfg.currencyCode,
       })
       .select()
       .single();
@@ -97,6 +102,7 @@ export async function POST(request: NextRequest) {
       action: 'case_created',
       entity: 'case',
       entityId: newCase.id,
+      orgId: ctx.orgId,
       details: { memberId, case_type, created_by_admin: true },
     });
 

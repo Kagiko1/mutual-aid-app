@@ -10,11 +10,17 @@ import { requireAdmin, handleGuardError } from '@/lib/guard';
 import { notifyAllMembers } from '@/lib/notify';
 import { logAudit } from '@/lib/audit';
 
-export async function POST(_request: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { profile, admin } = await requireAdmin();
+    const ctx = await requireAdmin(request);
+    const { profile, admin } = ctx;
 
-    const { data: event } = await admin.from('events').select('*').eq('id', params.id).single();
+    const { data: event } = await admin
+      .from('events')
+      .select('*')
+      .eq('id', params.id)
+      .eq('org_id', ctx.orgId)
+      .single();
     if (!event) return Response.json({ error: 'event not found' }, { status: 404 });
 
     const when = new Date(event.event_date).toLocaleString('en-KE', {
@@ -30,6 +36,7 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
       title: `Event: ${event.title}`,
       body,
       type: 'event',
+      orgId: ctx.orgId,
     });
 
     await logAudit(admin, {
@@ -38,6 +45,7 @@ export async function POST(_request: NextRequest, { params }: { params: { id: st
       entity: 'event',
       entityId: event.id,
       details: { notified },
+      orgId: ctx.orgId,
     });
 
     return Response.json({ ok: true, notified });

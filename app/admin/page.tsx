@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { getOrgConfig, money, fmtDate } from '@/lib/admin/config';
 import { Card, PageHeader, StatusPill } from '@/components/admin/ui';
 
@@ -14,16 +15,19 @@ function StatCard({ label, value, sub }: { label: string; value: string; sub?: s
 }
 
 export default async function AdminDashboard() {
-  const cfg = await getOrgConfig();
   const admin = createAdminClient();
+  const { orgId, org } = await resolveOrgContext(admin);
+  const cfg = await getOrgConfig(orgId);
 
-  const [{ data: lastReserve }, { data: funds }, { data: disbursements }, { data: invoices }, { data: audit }] =
+  const [{ data: lastReserve }, { data: funds }, { data: disbursements }, { data: invoices }, { data: audit }, { data: subscription }, { count: memberCount }] =
     await Promise.all([
-      admin.from('reserve_ledger').select('balance_after, created_at').order('created_at', { ascending: false }).limit(1).maybeSingle(),
-      admin.from('funds').select('id, name, balance').order('name'),
-      admin.from('disbursements').select('amount').eq('status', 'completed'),
-      admin.from('invoices').select('amount, status'),
-      admin.from('audit_log').select('*').order('created_at', { ascending: false }).limit(5),
+      admin.from('reserve_ledger').select('balance_after, created_at').eq('org_id', orgId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+      admin.from('funds').select('id, name, balance').eq('org_id', orgId).order('name'),
+      admin.from('disbursements').select('amount').eq('org_id', orgId).eq('status', 'completed'),
+      admin.from('invoices').select('amount, status').eq('org_id', orgId),
+      admin.from('audit_log').select('*').eq('org_id', orgId).order('created_at', { ascending: false }).limit(5),
+      admin.from('subscriptions').select('*, plans(*)').eq('org_id', orgId).maybeSingle(),
+      admin.from('profiles').select('id', { count: 'exact', head: true }).eq('org_id', orgId),
     ]);
 
   const reserveBalance = Number((lastReserve as { balance_after?: number } | null)?.balance_after ?? 0);
@@ -42,15 +46,19 @@ export default async function AdminDashboard() {
   const auditRows = (audit ?? []) as { id: string; actor_id: string | null; action: string; entity: string | null; created_at: string }[];
   const actorIds = Array.from(new Set(auditRows.map((a) => a.actor_id).filter(Boolean))) as string[];
   const { data: actors } = actorIds.length
-    ? await admin.from('profiles').select('id, full_name').in('id', actorIds as string[])
+    ? await admin.from('profiles').select('id, full_name').eq('org_id', orgId).in('id', actorIds as string[])
     : { data: [] };
   const actorName = new Map(((actors ?? []) as { id: string; full_name: string }[]).map((a) => [a.id, a.full_name]));
 
+  const sub = subscription as { plans?: { name?: string; max_members?: number | null } | null } | null;
+  const planName = sub?.plans?.name ?? 'No plan';
+  const planMax = sub?.plans?.max_members ?? null;
+
   return (
     <div>
-      <PageHeader title="Dashboard" subtitle="Fund health, collections and recent admin activity." />
+      <PageHeader title="Dashboard" subtitle={`Fund health, collections and recent admin activity · ${org.name}`} />
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-6">
         <StatCard label="Reserve Fund" value={money(reserveBalance, cfg)} sub="Latest ledger balance" />
         <StatCard
           label={welfareFund ? welfareFund.name : 'Welfare Fund'}
@@ -64,6 +72,9 @@ export default async function AdminDashboard() {
           sub={`${money(paidInvoiced, cfg)} of ${money(totalInvoiced, cfg)} invoiced`}
         />
         <StatCard label="Outstanding invoices" value={money(outstanding, cfg)} sub="Pending + overdue" />
+        <Link href="/admin/billing" className="rounded-xl transition hover:ring-2 hover:ring-slate-300">
+          <StatCard label="Billing" value={planName} sub={`${memberCount ?? 0} / ${planMax ?? '—'} members`} />
+        </Link>
       </div>
 
       <div className="mt-6 grid grid-cols-1 gap-4 xl:grid-cols-2">

@@ -12,12 +12,13 @@
  */
 import { NextRequest } from 'next/server';
 import { requireMember, handleGuardError } from '@/lib/guard';
-import { stkPush } from '@/lib/mpesa';
+import { stkPush, MPESA_MODE } from '@/lib/mpesa';
 import { logAudit } from '@/lib/audit';
 
 export async function POST(request: NextRequest) {
   try {
-    const { userId, admin } = await requireMember();
+    const ctx = await requireMember(request);
+    const { userId, admin } = ctx;
     const body = await request.json().catch(() => ({}));
     const { invoiceId, phone } = body as { invoiceId?: string; phone?: string };
 
@@ -25,10 +26,16 @@ export async function POST(request: NextRequest) {
       return Response.json({ error: 'invoiceId and phone are required' }, { status: 400 });
     }
 
+    // Tenant scope: only invoices in this org can be paid here. M-Pesa is KES-only.
+    if (ctx.org.currency_code !== 'KES' && MPESA_MODE !== 'stub') {
+      return Response.json({ error: 'mpesa_kes_only' }, { status: 400 });
+    }
+
     const { data: invoice, error: invErr } = await admin
       .from('invoices')
       .select('*')
       .eq('id', invoiceId)
+      .eq('org_id', ctx.orgId)
       .single();
     if (invErr || !invoice) {
       return Response.json({ error: 'invoice not found' }, { status: 404 });
@@ -53,9 +60,11 @@ export async function POST(request: NextRequest) {
     const { data: payment, error: payErr } = await admin
       .from('payments')
       .insert({
+        org_id: ctx.orgId,
         member_id: userId,
         invoice_id: invoice.id,
         amount: invoice.amount,
+        currency_code: invoice.currency_code ?? 'KES',
         channel: 'mpesa_stk',
         status: 'pending',
         callback_payload: {
@@ -74,6 +83,7 @@ export async function POST(request: NextRequest) {
       action: 'stk_push_initiated',
       entity: 'payment',
       entityId: payment.id,
+      orgId: ctx.orgId,
       details: { invoiceId: invoice.id, checkoutRequestId: result.checkoutRequestId },
     });
 

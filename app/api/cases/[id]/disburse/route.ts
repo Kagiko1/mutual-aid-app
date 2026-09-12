@@ -19,10 +19,11 @@ import { formatMoney } from '@/lib/money';
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { profile, admin } = await requireAdmin();
+    const ctx = await requireAdmin(request);
+    const { profile, admin } = ctx;
     checkTotp(request, profile);
 
-    const { data: theCase } = await admin.from('cases').select('*').eq('id', params.id).single();
+    const { data: theCase } = await admin.from('cases').select('*').eq('id', params.id).eq('org_id', ctx.orgId).single();
     if (!theCase) return Response.json({ error: 'case not found' }, { status: 404 });
     if (theCase.status !== 'approved') {
       return Response.json(
@@ -31,7 +32,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       );
     }
 
-    const { data: voucher } = await admin.from('vouchers').select('*').eq('case_id', params.id).single();
+    const { data: voucher } = await admin.from('vouchers').select('*').eq('case_id', params.id).eq('org_id', ctx.orgId).single();
     if (!voucher) return Response.json({ error: 'no voucher issued for this case' }, { status: 400 });
 
     const { data: beneficiaries } = await admin
@@ -54,7 +55,9 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       );
     }
 
-    const org = await getOrgConfig(admin);
+    const cfg = await getOrgConfig(admin, ctx.orgId);
+    // Disbursements inherit the case's currency.
+    const caseCurrency: string = theCase.currency_code ?? cfg.currencyCode;
     const allocations = splitBeneficiaries(voucher.amount, shares);
     const results: { beneficiaryId: string; beneficiaryName: string; amountMinor: number; status: string }[] = [];
 
@@ -63,10 +66,12 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       const { data: disb, error: disbErr } = await admin
         .from('disbursements')
         .insert({
+          org_id: ctx.orgId,
           case_id: theCase.id,
           beneficiary_id: ben.id,
           beneficiary_name: ben.full_name,
           amount: alloc.amountMinor,
+          currency_code: caseCurrency,
           channel: 'mpesa_b2c',
           status: 'pending',
         })
@@ -109,13 +114,14 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     }
 
     const now = new Date().toISOString();
-    await admin.from('cases').update({ status: 'disbursed', disbursed_at: now }).eq('id', theCase.id);
+    await admin.from('cases').update({ status: 'disbursed', disbursed_at: now }).eq('id', theCase.id).eq('org_id', ctx.orgId);
 
     await notifyMember(admin, {
       memberId: theCase.member_id,
       title: 'Benefit disbursed',
-      body: `${formatMoney(voucher.amount, org.currencySymbol, org.currencyCode)} has been disbursed to ${bens.length} beneficiar${bens.length === 1 ? 'y' : 'ies'} for ${theCase.deceased_name}.`,
+      body: `${formatMoney(voucher.amount, caseCurrency)} has been disbursed to ${bens.length} beneficiar${bens.length === 1 ? 'y' : 'ies'} for ${theCase.deceased_name}.`,
       type: 'case',
+      orgId: ctx.orgId,
     });
 
     await logAudit(admin, {
@@ -123,6 +129,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       action: 'case_disbursed',
       entity: 'case',
       entityId: theCase.id,
+      orgId: ctx.orgId,
       details: { voucherNo: voucher.voucher_no, allocations: results },
     });
 

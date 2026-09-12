@@ -1,18 +1,20 @@
 import { revalidatePath } from 'next/cache';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { requireAdmin } from '@/lib/admin/guard';
 import { fmtDate } from '@/lib/admin/config';
 import { Card, PageHeader, StatusPill, EmptyState } from '@/components/admin/ui';
 import BallotCreateForm from '@/components/admin/BallotCreateForm';
 
 export default async function BallotsPage() {
-  const supabase = createClient();
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
 
   async function createBallot(formData: FormData) {
     'use server';
     const session = await requireAdmin();
-    const supabase = createClient();
+    const admin = createAdminClient();
     const title = String(formData.get('title') || '').trim();
     if (!title) return;
     let labels: string[] = [];
@@ -26,7 +28,8 @@ export default async function BallotsPage() {
       .filter(Boolean)
       .map((label, i) => ({ id: `opt-${i + 1}`, label }));
     if (options.length < 2) return;
-    await supabase.from('ballots').insert({
+    await admin.from('ballots').insert({
+      org_id: orgId,
       title,
       description: String(formData.get('description') || '').trim() || null,
       status: 'draft',
@@ -39,10 +42,11 @@ export default async function BallotsPage() {
   async function setStatus(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
-    await supabase
+    const admin = createAdminClient();
+    await admin
       .from('ballots')
       .update({ status: String(formData.get('status')) })
+      .eq('org_id', orgId)
       .eq('id', String(formData.get('id')));
     revalidatePath('/admin/ballots');
   }
@@ -50,12 +54,12 @@ export default async function BallotsPage() {
   async function deleteBallot(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
-    await supabase.from('ballots').delete().eq('id', String(formData.get('id')));
+    const admin = createAdminClient();
+    await admin.from('ballots').delete().eq('org_id', orgId).eq('id', String(formData.get('id')));
     revalidatePath('/admin/ballots');
   }
 
-  const { data: ballots } = await supabase.from('ballots').select('*').order('created_at', { ascending: false });
+  const { data: ballots } = await admin.from('ballots').select('*').eq('org_id', orgId).order('created_at', { ascending: false });
   const ballotRows = (ballots ?? []) as {
     id: string;
     title: string;
@@ -66,7 +70,7 @@ export default async function BallotsPage() {
   }[];
 
   const { data: votes } = ballotRows.length
-    ? await supabase.from('votes').select('ballot_id').in('ballot_id', ballotRows.map((b) => b.id))
+    ? await admin.from('votes').select('ballot_id').eq('org_id', orgId).in('ballot_id', ballotRows.map((b) => b.id))
     : { data: [] };
   const voteCount = new Map<string, number>();
   for (const v of ((votes ?? []) as { ballot_id: string }[])) {

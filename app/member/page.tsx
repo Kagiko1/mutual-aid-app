@@ -1,6 +1,7 @@
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase/server';
-import { getOrgConfig } from '@/lib/orgConfig';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
+import { getOrgConfig } from '@/lib/admin/config';
 import { formatMoney } from '@/lib/money';
 import { waitingDaysRemaining } from '@/lib/engines/waitingPeriod';
 
@@ -33,51 +34,52 @@ function statusBadge(status: string) {
 }
 
 export default async function MemberDashboard() {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return null;
+  const admin = createAdminClient();
+  const { orgId, profile: ctxProfile } = await resolveOrgContext(admin);
+  const cfg = await getOrgConfig(orgId);
 
-  const cfg = await getOrgConfig(supabase);
-
-  const { data: profile } = await supabase
+  const { data: profile } = await admin
     .from('profiles')
     .select('id, full_name, email, phone, status, joined_at, waiting_ends_at')
-    .eq('id', user.id)
+    .eq('id', ctxProfile.id)
+    .eq('org_id', orgId)
     .maybeSingle();
 
-  const { data: cases } = await supabase
+  const { data: cases } = await admin
     .from('cases')
     .select('id, case_type, deceased_name, status, benefit_amount, created_at')
-    .eq('member_id', user.id)
+    .eq('member_id', ctxProfile.id)
+    .eq('org_id', orgId)
     .order('created_at', { ascending: false })
     .limit(5);
 
-  const { data: invoices } = await supabase
+  const { data: invoices } = await admin
     .from('invoices')
     .select('id, amount, status, due_date, case_id')
-    .eq('member_id', user.id)
+    .eq('member_id', ctxProfile.id)
+    .eq('org_id', orgId)
     .in('status', ['pending', 'overdue'])
     .order('due_date', { ascending: true })
     .limit(5);
 
-  const { data: notifications } = await supabase
+  const { data: notifications } = await admin
     .from('notifications')
     .select('id, title, body, created_at, read_at')
-    .eq('member_id', user.id)
+    .eq('member_id', ctxProfile.id)
+    .eq('org_id', orgId)
     .is('read_at', null)
     .order('created_at', { ascending: false })
     .limit(5);
 
-  const { data: leadership } = await supabase
+  const { data: leadership } = await admin
     .from('leadership_contacts')
     .select('id, name, role, phone, email')
+    .eq('org_id', orgId)
     .order('created_at', { ascending: true })
     .limit(4);
 
   const waitingRemaining = profile
-    ? waitingDaysRemaining(profile.joined_at, cfg.waitingPeriodDays)
+    ? waitingDaysRemaining(profile.joined_at, cfg.waiting_period_days)
     : 0;
   const dueTotal = (invoices ?? []).reduce((sum: number, i: any) => sum + Number(i.amount ?? 0), 0);
 
@@ -140,7 +142,7 @@ export default async function MemberDashboard() {
             Invoices due
           </h2>
           <p className="mt-2 text-2xl font-bold text-gray-900">
-            {formatMoney(dueTotal, cfg.currencySymbol, cfg.currencyCode)}
+            {formatMoney(dueTotal, cfg.currency_code)}
           </p>
           <p className="mt-1 text-sm text-gray-500">
             {(invoices ?? []).length} invoice{(invoices ?? []).length === 1 ? '' : 's'} pending or

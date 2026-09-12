@@ -1,37 +1,40 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { requireAdmin } from '@/lib/admin/guard';
 import { getOrgConfig, money, fmtDate, fmtDay } from '@/lib/admin/config';
 import { Card, PageHeader, StatusPill, EmptyState, inputCls, btnPrimary } from '@/components/admin/ui';
 import DependentActions from '@/components/admin/DependentActions';
 
 export default async function MemberDetailPage({ params }: { params: { id: string } }) {
-  const cfg = await getOrgConfig();
-  const supabase = createClient();
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
+  const cfg = await getOrgConfig(orgId);
   const id = params.id;
 
   async function setStatus(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
-    await supabase.from('profiles').update({ status: String(formData.get('status')) }).eq('id', id);
+    const admin = createAdminClient();
+    await admin.from('profiles').update({ status: String(formData.get('status')) }).eq('org_id', orgId).eq('id', id);
     revalidatePath(`/admin/members/${id}`);
   }
 
   async function reviewKyc(formData: FormData) {
     'use server';
     const session = await requireAdmin();
-    const supabase = createClient();
-    await supabase
+    const admin = createAdminClient();
+    await admin
       .from('kyc_docs')
       .update({ status: String(formData.get('status')), reviewed_by: session.userId })
+      .eq('org_id', orgId)
       .eq('id', String(formData.get('id')));
     revalidatePath(`/admin/members/${id}`);
   }
 
-  const { data: profile } = await supabase.from('profiles').select('*').eq('id', id).single();
+  const { data: profile } = await admin.from('profiles').select('*').eq('org_id', orgId).eq('id', id).single();
   if (!profile) notFound();
   const p = profile as {
     id: string;
@@ -48,12 +51,12 @@ export default async function MemberDetailPage({ params }: { params: { id: strin
 
   const [{ data: dependents }, { data: beneficiaries }, { data: kycDocs }, { data: cases }, { data: invoices }, { data: payments }] =
     await Promise.all([
-      supabase.from('dependents').select('*').eq('member_id', id).order('created_at', { ascending: true }),
-      supabase.from('beneficiaries').select('*').eq('member_id', id).order('created_at', { ascending: true }),
-      supabase.from('kyc_docs').select('*').eq('member_id', id).order('created_at', { ascending: false }),
-      supabase.from('cases').select('id, deceased_name, case_type, benefit_amount, status, created_at').eq('member_id', id).order('created_at', { ascending: false }),
-      supabase.from('invoices').select('*').eq('member_id', id).order('created_at', { ascending: false }),
-      supabase.from('payments').select('*').eq('member_id', id).order('created_at', { ascending: false }),
+      admin.from('dependents').select('*').eq('org_id', orgId).eq('member_id', id).order('created_at', { ascending: true }),
+      admin.from('beneficiaries').select('*').eq('org_id', orgId).eq('member_id', id).order('created_at', { ascending: true }),
+      admin.from('kyc_docs').select('*').eq('org_id', orgId).eq('member_id', id).order('created_at', { ascending: false }),
+      admin.from('cases').select('id, deceased_name, case_type, benefit_amount, status, created_at').eq('org_id', orgId).eq('member_id', id).order('created_at', { ascending: false }),
+      admin.from('invoices').select('*').eq('org_id', orgId).eq('member_id', id).order('created_at', { ascending: false }),
+      admin.from('payments').select('*').eq('org_id', orgId).eq('member_id', id).order('created_at', { ascending: false }),
     ]);
 
   const depRows = (dependents ?? []) as {

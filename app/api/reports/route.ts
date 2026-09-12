@@ -82,7 +82,8 @@ function toPdfBuffer(title: string, columns: string[], rows: Record<string, unkn
 
 export async function GET(request: NextRequest) {
   try {
-    const { admin } = await requireAdmin();
+    const ctx = await requireAdmin(request);
+    const { admin } = ctx;
     const type = request.nextUrl.searchParams.get('type') as ReportType | null;
     const format = request.nextUrl.searchParams.get('format') ?? 'csv';
 
@@ -97,11 +98,15 @@ export async function GET(request: NextRequest) {
     }
 
     const { table, columns, label } = REPORTS[type];
-    const { data, error } = await admin.from(table).select(columns.join(',')).limit(1000);
+    const { data, error } = await admin
+      .from(table)
+      .select(columns.join(','))
+      .eq('org_id', ctx.orgId)
+      .limit(1000);
     if (error) return Response.json({ error: 'failed to load report data', message: error.message }, { status: 500 });
     const rows = (data ?? []) as unknown as Record<string, unknown>[];
 
-    const org = await getOrgConfig(admin);
+    const org = await getOrgConfig(admin, ctx.orgId);
     const stamp = new Date().toISOString().slice(0, 10);
     const filename = `${type}-report-${stamp}`;
 

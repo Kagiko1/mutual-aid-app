@@ -17,7 +17,8 @@ const DECISIONS = ['reviewed', 'request_corrections', 'rejected'] as const;
 
 export async function POST(request: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const { profile, admin } = await requireAdmin();
+    const ctx = await requireAdmin(request);
+    const { profile, admin } = ctx;
     const body = await request.json().catch(() => ({}));
     const { decision, notes } = body as { decision?: string; notes?: string };
 
@@ -28,7 +29,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       );
     }
 
-    const { data: theCase } = await admin.from('cases').select('*').eq('id', params.id).single();
+    const { data: theCase } = await admin.from('cases').select('*').eq('id', params.id).eq('org_id', ctx.orgId).single();
     if (!theCase) return Response.json({ error: 'case not found' }, { status: 404 });
 
     const now = new Date().toISOString();
@@ -46,6 +47,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       .from('cases')
       .update(patch)
       .eq('id', params.id)
+      .eq('org_id', ctx.orgId)
       .select()
       .single();
     if (error) {
@@ -62,6 +64,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       title: titles[decision],
       body: notes ? `Admin notes: ${notes}` : undefined,
       type: 'case',
+      orgId: ctx.orgId,
     });
 
     await logAudit(admin, {
@@ -69,6 +72,7 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
       action: `case_${decision}`,
       entity: 'case',
       entityId: params.id,
+      orgId: ctx.orgId,
       details: { notes: notes ?? null },
     });
 

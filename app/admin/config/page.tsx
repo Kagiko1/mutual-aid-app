@@ -1,5 +1,6 @@
 import { revalidatePath } from 'next/cache';
-import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/server';
+import { resolveOrgContext } from '@/lib/org-context';
 import { requireAdmin } from '@/lib/admin/guard';
 import { getOrgConfig } from '@/lib/admin/config';
 import { toMinor } from '@/lib/money';
@@ -7,12 +8,14 @@ import { Card, PageHeader, inputCls, btnPrimary } from '@/components/admin/ui';
 import TotpSetup from '@/components/admin/TotpSetup';
 
 export default async function ConfigPage() {
-  const cfg = await getOrgConfig();
+  const admin = createAdminClient();
+  const { orgId } = await resolveOrgContext(admin);
+  const cfg = await getOrgConfig(orgId);
 
   async function saveConfig(formData: FormData) {
     'use server';
     await requireAdmin();
-    const supabase = createClient();
+    const admin = createAdminClient();
 
     const num = (k: string, fallback: number) => {
       const v = Number(String(formData.get(k) || ''));
@@ -30,7 +33,7 @@ export default async function ConfigPage() {
       ['annual_fee', toMinor(num('annual_fee', cfg.annual_fee / 100))],
     ];
     for (const [key, value] of entries) {
-      await supabase.from('org_config').upsert({ key, value });
+      await admin.from('org_config').upsert({ org_id: orgId, key, value }, { onConflict: 'org_id,key' });
     }
     revalidatePath('/admin/config');
     revalidatePath('/admin');
