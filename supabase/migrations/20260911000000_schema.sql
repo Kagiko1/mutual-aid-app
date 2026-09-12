@@ -3,6 +3,8 @@
 -- Money is stored in MINOR units (cents) as bigint. Percentages as numeric(5,2).
 
 -- ============ helpers ============
+-- (defined before tables; bodies are not validated at creation time)
+SET check_function_bodies = false;
 create or replace function public.is_admin()
 returns boolean
 language sql stable security definer
@@ -107,7 +109,7 @@ create table public.consents (
 create table public.signatures (
   id uuid primary key default gen_random_uuid(),
   member_id uuid not null references public.profiles(id) on delete cascade,
-  case_id uuid references public.cases(id) on delete set null,
+  case_id uuid, -- FK to cases added below (cases table is created after this one)
   signature_type text not null check (signature_type in ('typed','canvas')),
   signature_data text not null,
   signed_at timestamptz not null default now()
@@ -135,6 +137,11 @@ create table public.cases (
 );
 create index idx_cases_member on public.cases(member_id);
 create index idx_cases_status on public.cases(status);
+
+-- FK from signatures to cases (deferred: cases table is created after signatures)
+alter table public.signatures
+  add constraint signatures_case_id_fkey
+  foreign key (case_id) references public.cases(id) on delete set null;
 
 -- ============ case documents (post-submission uploads allowed) ============
 create table public.case_documents (
