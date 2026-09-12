@@ -97,9 +97,10 @@ Money is stored in **minor units** (integer cents) everywhere; display uses
    `CRON_SECRET` (long random string), `BALLOT_SALT` (long random string,
    set once — changing it invalidates vote-hash uniqueness).
 4. Deploy. The cron in `vercel.json` runs `/api/cron/drip` at 3am UTC
-   (6am Africa/Nairobi). **Important:** Vercel Cron cannot attach the secret
-   automatically — in **Vercel → Project → Cron Jobs**, edit the job path to
-   `/api/cron/drip?secret=<your CRON_SECRET>`.
+   (6am Africa/Nairobi) with `?secret=<CRON_SECRET>` already in the path
+   (the endpoint also accepts `Authorization: Bearer <CRON_SECRET>`).
+   To rotate the secret, change it in both the `CRON_SECRET` env var and
+   the `vercel.json` cron path, then redeploy.
 5. Point M-Pesa callback URLs at your production domain (see `.env.example`).
 
 ## M-Pesa & SMS
