@@ -13,6 +13,7 @@ const NAV = [
   { href: '/member/leadership', label: 'Leadership' },
   { href: '/member/events', label: 'Events' },
   { href: '/member/ballots', label: 'Ballots' },
+  { href: '/member/settings', label: 'Settings' },
 ];
 
 export default async function MemberLayout({ children }: { children: React.ReactNode }) {

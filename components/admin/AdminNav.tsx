@@ -19,6 +19,7 @@ const LINKS = [
   { href: '/admin/config', label: 'Config' },
   { href: '/admin/billing', label: 'Billing' },
   { href: '/admin/payments', label: 'Payments' },
+  { href: '/admin/settings', label: 'Settings' },
 ];
 
 export interface OrgOption {

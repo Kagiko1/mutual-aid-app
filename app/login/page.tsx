@@ -17,6 +17,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const created = searchParams.get('created');
+  const reset = searchParams.get('reset');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -52,6 +53,11 @@ function LoginForm() {
       {created === 'member' && (
         <p className="mt-4 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800" role="status">
           Your account was created. Sign in to complete onboarding.
+        </p>
+      )}
+      {reset === '1' && (
+        <p className="mt-4 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-800" role="status">
+          Your password was updated. Sign in with your new password.
         </p>
       )}
 
@@ -101,6 +107,11 @@ function LoginForm() {
         >
           {loading ? 'Please wait...' : 'Sign in'}
         </button>
+        <div className="text-center">
+          <Link href="/login/forgot" className="text-sm font-medium text-emerald-700 hover:underline">
+            Forgot password?
+          </Link>
+        </div>
       </form>
 
       <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
