@@ -1,1 +1,1 @@
-{"crons":[{"path":"/api/cron/drip?secret=4641e93a88111f17c342d0c8c99474b9d5e55dbcdfa8ecda1433f777d6c594d1","schedule":"0 3 * * *"}]}
+{"crons":[{"path":"/api/cron/drip","schedule":"0 3 * * *"}]}

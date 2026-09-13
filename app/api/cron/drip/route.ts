@@ -7,7 +7,9 @@
  * and runs the drip engine per org with that org's config, currency and
  * tenant scope. All reads/writes are scoped by org_id.
  *
- * Auth: ?secret=<CRON_SECRET> or Authorization: Bearer <CRON_SECRET>.
+ * Auth: Authorization: Bearer <CRON_SECRET>. Vercel automatically attaches
+ * this header to cron invocations when CRON_SECRET is set as a project
+ * environment variable, so no secret is needed in the cron path.
  *
  * Duplicate-action guard: before acting on an invoice we check audit_log for
  * a matching drip action on that invoice (scoped to the org):
@@ -201,9 +203,10 @@ async function runDripForOrg(
 
 export async function GET(request: NextRequest) {
   const secret = process.env.CRON_SECRET;
-  const provided =
-    request.nextUrl.searchParams.get('secret') ??
-    (request.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+  // Bearer-only auth. Vercel Cron automatically sends
+  // `Authorization: Bearer <CRON_SECRET>` when the env var is set, so the
+  // secret never needs to appear in a URL, log, or config file.
+  const provided = (request.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
   if (!secret || provided !== secret) {
     return Response.json({ error: 'unauthorized' }, { status: 401 });
   }
