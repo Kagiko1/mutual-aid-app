@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { createClient } from '@/lib/supabase/client';
+import PasswordInput from '@/components/account/PasswordInput';
 
 /**
  * Change-password form for signed-in users. Verifies the current password by
@@ -62,9 +63,6 @@ export default function ChangePasswordForm() {
     }
   };
 
-  const inputClass =
-    'mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none';
-
   return (
     <form onSubmit={handleSubmit} className="space-y-4 rounded-xl border bg-white p-6 shadow-sm">
       <h2 className="text-base font-semibold text-gray-900">Change password</h2>
@@ -84,14 +82,12 @@ export default function ChangePasswordForm() {
         <label htmlFor="current-password" className="block text-sm font-medium text-gray-700">
           Current password
         </label>
-        <input
+        <PasswordInput
           id="current-password"
-          type="password"
           required
           autoComplete="current-password"
           value={currentPassword}
           onChange={(e) => setCurrentPassword(e.target.value)}
-          className={inputClass}
         />
       </div>
 
@@ -99,14 +95,12 @@ export default function ChangePasswordForm() {
         <label htmlFor="new-password" className="block text-sm font-medium text-gray-700">
           New password
         </label>
-        <input
+        <PasswordInput
           id="new-password"
-          type="password"
           required
           autoComplete="new-password"
           value={newPassword}
           onChange={(e) => setNewPassword(e.target.value)}
-          className={inputClass}
           placeholder="At least 8 characters"
         />
       </div>
@@ -115,14 +109,12 @@ export default function ChangePasswordForm() {
         <label htmlFor="confirm-password" className="block text-sm font-medium text-gray-700">
           Confirm new password
         </label>
-        <input
+        <PasswordInput
           id="confirm-password"
-          type="password"
           required
           autoComplete="new-password"
           value={confirmPassword}
           onChange={(e) => setConfirmPassword(e.target.value)}
-          className={inputClass}
         />
       </div>
 

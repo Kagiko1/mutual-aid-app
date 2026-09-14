@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import PasswordInput from '@/components/account/PasswordInput';
 
 export default function ResetPasswordPage() {
   return (
@@ -92,14 +93,12 @@ function ResetPasswordForm() {
             <label htmlFor="new-password" className="block text-sm font-medium text-gray-700">
               New password
             </label>
-            <input
+            <PasswordInput
               id="new-password"
-              type="password"
               required
               autoComplete="new-password"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
               placeholder="At least 8 characters"
             />
           </div>
@@ -107,14 +106,12 @@ function ResetPasswordForm() {
             <label htmlFor="confirm-password" className="block text-sm font-medium text-gray-700">
               Confirm new password
             </label>
-            <input
+            <PasswordInput
               id="confirm-password"
-              type="password"
               required
               autoComplete="new-password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              className="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-emerald-600 focus:outline-none"
             />
           </div>
           <button
